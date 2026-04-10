@@ -1,4 +1,5 @@
 from typing import Literal, get_args, get_origin, get_type_hints
+import os
 
 from autoresearch.bridge.health import classify_bridge_status
 from autoresearch.bridge.ssh_master import SSHMasterClient, run_command
@@ -190,7 +191,7 @@ def test_status_uses_health_classification_and_preserves_percent_control_path() 
 
 def test_run_command_returns_command_result_when_ssh_binary_is_missing(monkeypatch: object) -> None:
     def fake_run(*args: object, **kwargs: object) -> object:
-        raise FileNotFoundError("ssh")
+        raise FileNotFoundError(2, os.strerror(2), "ssh")
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
@@ -199,5 +200,32 @@ def test_run_command_returns_command_result_when_ssh_binary_is_missing(monkeypat
     assert result.args == ("ssh", "-O", "check", "polaris-relay")
     assert result.returncode == 127
     assert result.stdout == ""
-    assert result.stderr == "ssh"
+    assert result.stderr == "ssh executable not found"
     assert result.duration_seconds >= 0
+
+
+def test_status_reports_stale_when_ssh_binary_is_missing(monkeypatch: object) -> None:
+    def fake_run(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError(2, os.strerror(2), "ssh")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        )
+    )
+
+    status = client.status()
+
+    assert status.state == "STALE"
+    assert status.explanation == "Bridge state is abnormal and requires operator attention."
+    assert status.command_result is not None
+    assert status.command_result.returncode == 127
+    assert status.command_result.stderr == "ssh executable not found"

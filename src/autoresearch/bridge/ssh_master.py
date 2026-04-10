@@ -22,7 +22,7 @@ def run_command(args: tuple[str, ...]) -> CommandResult:
             args=args,
             returncode=127,
             stdout="",
-            stderr=str(exc),
+            stderr=f"{exc.filename or args[0]} executable not found",
             duration_seconds=time.perf_counter() - started,
         )
     return CommandResult(
