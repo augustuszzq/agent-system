@@ -1,7 +1,9 @@
 from typing import Literal, get_args, get_origin, get_type_hints
 
 from autoresearch.bridge.health import classify_bridge_status
+from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.schemas import BridgeStatusResult, CommandResult
+from autoresearch.settings import BridgeSettings
 
 
 def test_bridge_status_result_state_annotation_is_limited_to_known_states() -> None:
@@ -81,3 +83,53 @@ def test_classify_bridge_status_reports_stale_for_abnormal_failure_without_socke
     assert status.explanation == "Bridge state is abnormal and requires operator attention."
     assert status.command_result is result
     assert status.control_path_exists is False
+
+
+def test_attach_uses_master_background_flags() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.attach()
+
+    assert calls == [("ssh", "-MNf", "polaris-relay")]
+
+
+def test_check_uses_mux_check_operation() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=255, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.check()
+
+    assert calls == [("ssh", "-O", "check", "polaris-relay")]
