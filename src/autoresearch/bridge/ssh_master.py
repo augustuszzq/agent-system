@@ -15,7 +15,16 @@ CommandRunner = Callable[[tuple[str, ...]], CommandResult]
 
 def run_command(args: tuple[str, ...]) -> CommandResult:
     started = time.perf_counter()
-    completed = subprocess.run(args, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        return CommandResult(
+            args=args,
+            returncode=127,
+            stdout="",
+            stderr=str(exc),
+            duration_seconds=time.perf_counter() - started,
+        )
     return CommandResult(
         args=args,
         returncode=completed.returncode,

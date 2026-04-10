@@ -1,7 +1,7 @@
 from typing import Literal, get_args, get_origin, get_type_hints
 
 from autoresearch.bridge.health import classify_bridge_status
-from autoresearch.bridge.ssh_master import SSHMasterClient
+from autoresearch.bridge.ssh_master import SSHMasterClient, run_command
 from autoresearch.schemas import BridgeStatusResult, CommandResult
 from autoresearch.settings import BridgeSettings
 
@@ -133,3 +133,71 @@ def test_check_uses_mux_check_operation() -> None:
     client.check()
 
     assert calls == [("ssh", "-O", "check", "polaris-relay")]
+
+
+def test_detach_uses_mux_exit_operation() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.detach()
+
+    assert calls == [("ssh", "-O", "exit", "polaris-relay")]
+
+
+def test_status_uses_health_classification_and_preserves_percent_control_path() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="Master running", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    status = client.status()
+
+    assert calls == [("ssh", "-O", "check", "polaris-relay")]
+    assert status.alias == "polaris-relay"
+    assert status.state == "ATTACHED"
+    assert status.control_path_exists is None
+
+
+def test_run_command_returns_command_result_when_ssh_binary_is_missing(monkeypatch: object) -> None:
+    def fake_run(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError("ssh")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = run_command(("ssh", "-O", "check", "polaris-relay"))
+
+    assert result.args == ("ssh", "-O", "check", "polaris-relay")
+    assert result.returncode == 127
+    assert result.stdout == ""
+    assert result.stderr == "ssh"
+    assert result.duration_seconds >= 0
