@@ -21,8 +21,15 @@ def _resolve_path(repo_root: Path, raw_path: str) -> Path:
     return repo_root / path
 
 
+def resolve_repo_root(repo_root: Path | None = None) -> Path:
+    explicit = os.getenv("AUTORESEARCH_REPO_ROOT")
+    if explicit:
+        return Path(explicit).resolve()
+    return (repo_root or Path(__file__).resolve().parents[2]).resolve()
+
+
 def load_settings(repo_root: Path | None = None) -> Settings:
-    resolved_root = (repo_root or Path(__file__).resolve().parents[2]).resolve()
+    resolved_root = resolve_repo_root(repo_root=repo_root)
     config_path = resolved_root / "conf" / "app.yaml"
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
