@@ -148,7 +148,8 @@ def test_bridge_attach_uses_bridge_service(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert fake_service.calls == ["attach"]
-    assert "Attached bridge polaris-relay" in result.stdout
+    assert "Bridge polaris-relay: ATTACHED" in result.stdout
+    assert "OpenSSH control master attach command completed." in result.stdout
 
 
 def test_bridge_attach_reports_failures(monkeypatch) -> None:
@@ -167,6 +168,7 @@ def test_bridge_attach_reports_failures(monkeypatch) -> None:
 
     assert result.exit_code == 255
     assert fake_service.calls == ["attach"]
+    assert "Command failed (255): ssh -MNf polaris-relay" in result.stderr
     assert "Permission denied" in result.stderr
 
 
@@ -215,7 +217,41 @@ def test_bridge_detach_uses_bridge_service(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert fake_service.calls == ["detach"]
-    assert "Detached bridge polaris-relay" in result.stdout
+    assert "Bridge polaris-relay: DETACHED" in result.stdout
+    assert "OpenSSH control master exited cleanly." in result.stdout
+
+
+def test_bridge_detach_reports_detached_state_when_no_master(monkeypatch) -> None:
+    fake_service = FakeBridgeService(
+        detach_result=CommandResult(
+            args=("ssh", "-O", "exit", "polaris-relay"),
+            returncode=255,
+            stdout="",
+            stderr="Control socket connect(/tmp/cm): No such file or directory",
+            duration_seconds=0.01,
+        ),
+        status_result=BridgeStatusResult(
+            alias="polaris-relay",
+            state="DETACHED",
+            explanation="No active OpenSSH control master is attached.",
+            command_result=CommandResult(
+                args=("ssh", "-O", "check", "polaris-relay"),
+                returncode=255,
+                stdout="",
+                stderr="Control socket connect(/tmp/cm): No such file or directory",
+                duration_seconds=0.01,
+            ),
+            control_path_exists=None,
+        ),
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "detach"])
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["detach", "status"]
+    assert "Bridge polaris-relay: DETACHED" in result.stdout
+    assert "No active OpenSSH control master is attached." in result.stdout
 
 
 def test_repository_docs_exist() -> None:

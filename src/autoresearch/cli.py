@@ -5,7 +5,7 @@ import typer
 from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import init_db
 from autoresearch.runs.registry import RunRegistry
-from autoresearch.schemas import RunCreateRequest
+from autoresearch.schemas import CommandResult, RunCreateRequest
 from autoresearch.settings import load_settings
 
 
@@ -61,10 +61,13 @@ def _echo_bridge_status(prefix: str, state: str, explanation: str) -> None:
     typer.echo(explanation)
 
 
-def _echo_failed_command(result: object) -> None:
-    stderr = getattr(result, "stderr", "")
-    if stderr:
-        typer.echo(stderr, err=True)
+def _echo_failed_command(result: CommandResult) -> None:
+    typer.echo(
+        f"Command failed ({result.returncode}): {' '.join(result.args)}",
+        err=True,
+    )
+    if result.stderr:
+        typer.echo(result.stderr, err=True)
 
 
 @bridge_app.command("attach")
@@ -74,7 +77,11 @@ def attach_bridge() -> None:
     if result.returncode != 0:
         _echo_failed_command(result)
         raise typer.Exit(code=result.returncode)
-    typer.echo(f"Attached bridge {service.settings.alias}")
+    _echo_bridge_status(
+        f"Bridge {service.settings.alias}",
+        "ATTACHED",
+        "OpenSSH control master attach command completed.",
+    )
 
 
 @bridge_app.command("check")
@@ -97,10 +104,21 @@ def status_bridge() -> None:
 def detach_bridge() -> None:
     service = build_bridge_service()
     result = service.detach()
-    if result.returncode != 0:
-        _echo_failed_command(result)
-        raise typer.Exit(code=result.returncode)
-    typer.echo(f"Detached bridge {service.settings.alias}")
+    if result.returncode == 0:
+        _echo_bridge_status(
+            f"Bridge {service.settings.alias}",
+            "DETACHED",
+            "OpenSSH control master exited cleanly.",
+        )
+        return
+
+    status = service.status()
+    if status.state == "DETACHED":
+        _echo_bridge_status(f"Bridge {status.alias}", status.state, status.explanation)
+        return
+
+    _echo_failed_command(result)
+    raise typer.Exit(code=result.returncode)
 
 
 def main() -> None:
