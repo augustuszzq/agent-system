@@ -2,10 +2,26 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from autoresearch import cli as cli_module
 from autoresearch.cli import app
+from autoresearch.schemas import BridgeStatusResult, CommandResult
 
 
 runner = CliRunner()
+
+
+def _write_app_config(conf_dir: Path) -> None:
+    (conf_dir / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
+        encoding="utf-8",
+    )
 
 
 def _write_bridge_config(conf_dir: Path) -> None:
@@ -22,30 +38,83 @@ def _write_bridge_config(conf_dir: Path) -> None:
     )
 
 
+def _write_repo_config(tmp_path: Path) -> None:
+    (tmp_path / "conf").mkdir()
+    _write_app_config(tmp_path / "conf")
+    _write_bridge_config(tmp_path / "conf")
+
+
+class FakeBridgeService:
+    def __init__(
+        self,
+        *,
+        alias: str = "polaris-relay",
+        attach_result: CommandResult | None = None,
+        check_result: CommandResult | None = None,
+        detach_result: CommandResult | None = None,
+        status_result: BridgeStatusResult | None = None,
+    ) -> None:
+        self.settings = type("Settings", (), {"alias": alias})()
+        self.attach_result = attach_result or CommandResult(
+            args=("ssh", "-MNf", alias),
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0.01,
+        )
+        self.check_result = check_result or CommandResult(
+            args=("ssh", "-O", "check", alias),
+            returncode=0,
+            stdout="Master running",
+            stderr="",
+            duration_seconds=0.01,
+        )
+        self.detach_result = detach_result or CommandResult(
+            args=("ssh", "-O", "exit", alias),
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0.01,
+        )
+        self.status_result = status_result or BridgeStatusResult(
+            alias=alias,
+            state="ATTACHED",
+            explanation="OpenSSH control master is healthy.",
+            command_result=self.check_result,
+            control_path_exists=None,
+        )
+        self.calls: list[str] = []
+
+    def attach(self) -> CommandResult:
+        self.calls.append("attach")
+        return self.attach_result
+
+    def check(self) -> CommandResult:
+        self.calls.append("check")
+        return self.check_result
+
+    def detach(self) -> CommandResult:
+        self.calls.append("detach")
+        return self.detach_result
+
+    def status(self) -> BridgeStatusResult:
+        self.calls.append("status")
+        return self.status_result
+
+
 def test_cli_help_shows_top_level_commands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
     assert "db" in result.stdout
     assert "run" in result.stdout
+    assert "bridge" in result.stdout
 
 
 def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
-    (tmp_path / "conf").mkdir()
-    (tmp_path / "conf" / "app.yaml").write_text(
-        "app_name: auto-research\n"
-        "paths:\n"
-        "  state_dir: state\n"
-        "  cache_dir: cache\n"
-        "  logs_dir: logs\n"
-        "  db_path: state/autoresearch.db\n"
-        "remote:\n"
-        "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
-        encoding="utf-8",
-    )
-    _write_bridge_config(tmp_path / "conf")
+    _write_repo_config(tmp_path)
 
     result = runner.invoke(app, ["db", "init"])
 
@@ -56,19 +125,7 @@ def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
 def test_run_create_and_list_round_trip(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
-    (tmp_path / "conf").mkdir()
-    (tmp_path / "conf" / "app.yaml").write_text(
-        "app_name: auto-research\n"
-        "paths:\n"
-        "  state_dir: state\n"
-        "  cache_dir: cache\n"
-        "  logs_dir: logs\n"
-        "  db_path: state/autoresearch.db\n"
-        "remote:\n"
-        "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
-        encoding="utf-8",
-    )
-    _write_bridge_config(tmp_path / "conf")
+    _write_repo_config(tmp_path)
 
     init_result = runner.invoke(app, ["db", "init"])
     create_result = runner.invoke(
@@ -81,6 +138,84 @@ def test_run_create_and_list_round_trip(tmp_path, monkeypatch) -> None:
     assert create_result.exit_code == 0
     assert "local-debug" in list_result.stdout
     assert "demo" in list_result.stdout
+
+
+def test_bridge_attach_uses_bridge_service(monkeypatch) -> None:
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "attach"])
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["attach"]
+    assert "Attached bridge polaris-relay" in result.stdout
+
+
+def test_bridge_attach_reports_failures(monkeypatch) -> None:
+    fake_service = FakeBridgeService(
+        attach_result=CommandResult(
+            args=("ssh", "-MNf", "polaris-relay"),
+            returncode=255,
+            stdout="",
+            stderr="Permission denied",
+            duration_seconds=0.01,
+        )
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "attach"])
+
+    assert result.exit_code == 255
+    assert fake_service.calls == ["attach"]
+    assert "Permission denied" in result.stderr
+
+
+def test_bridge_check_exits_nonzero_when_not_attached(monkeypatch) -> None:
+    fake_service = FakeBridgeService(
+        status_result=BridgeStatusResult(
+            alias="polaris-relay",
+            state="DETACHED",
+            explanation="No active OpenSSH control master is attached.",
+            command_result=CommandResult(
+                args=("ssh", "-O", "check", "polaris-relay"),
+                returncode=255,
+                stdout="",
+                stderr="Control socket connect(/tmp/cm): No such file or directory",
+                duration_seconds=0.01,
+            ),
+            control_path_exists=None,
+        )
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "check"])
+
+    assert result.exit_code == 1
+    assert fake_service.calls == ["status"]
+    assert "Bridge polaris-relay: DETACHED" in result.stdout
+    assert "No active OpenSSH control master is attached." in result.stdout
+
+
+def test_bridge_status_reports_attached(monkeypatch) -> None:
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "status"])
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["status"]
+    assert "Bridge polaris-relay: ATTACHED" in result.stdout
+
+
+def test_bridge_detach_uses_bridge_service(monkeypatch) -> None:
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "detach"])
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["detach"]
+    assert "Detached bridge polaris-relay" in result.stdout
 
 
 def test_repository_docs_exist() -> None:
