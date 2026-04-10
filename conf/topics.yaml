@@ -1,0 +1,12 @@
+profiles:
+  ai_systems:
+    include:
+      - distributed training
+      - inference serving
+  llm_systems:
+    include:
+      - vllm
+      - continuous batching
+exclude:
+  - biology
+  - medicine
