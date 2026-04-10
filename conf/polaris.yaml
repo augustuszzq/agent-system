@@ -1,3 +1,8 @@
 bridge:
   alias: polaris-relay
   host: polaris-login-04.hsn.cm.polaris.alcf.anl.gov
+  user: ALCF_USERNAME
+  control_path: ~/.ssh/cm-%C
+  server_alive_interval: 60
+  server_alive_count_max: 3
+  connect_timeout: 15
