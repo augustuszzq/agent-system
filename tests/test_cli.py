@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from autoresearch.cli import app
@@ -63,3 +65,12 @@ def test_run_create_and_list_round_trip(tmp_path, monkeypatch) -> None:
     assert create_result.exit_code == 0
     assert "local-debug" in list_result.stdout
     assert "demo" in list_result.stdout
+
+
+def test_repository_docs_exist() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    assert (repo_root / "README.md").exists()
+    assert (repo_root / "AGENTS.md").exists()
+    assert (repo_root / "PLANS.md").exists()
+    assert (repo_root / "SESSION_RESUME.md").exists()

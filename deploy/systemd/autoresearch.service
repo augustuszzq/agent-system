@@ -1,0 +1,14 @@
+[Unit]
+Description=Auto Research control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/auto-research/repo
+ExecStart=/srv/auto-research/repo/.venv/bin/python -m autoresearch.cli
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
