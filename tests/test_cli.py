@@ -8,6 +8,20 @@ from autoresearch.cli import app
 runner = CliRunner()
 
 
+def _write_bridge_config(conf_dir: Path) -> None:
+    (conf_dir / "polaris.yaml").write_text(
+        "bridge:\n"
+        "  alias: polaris-relay\n"
+        "  host: polaris-login-04.hsn.cm.polaris.alcf.anl.gov\n"
+        "  user: zzq\n"
+        "  control_path: ~/.ssh/cm-%C\n"
+        "  server_alive_interval: 60\n"
+        "  server_alive_count_max: 3\n"
+        "  connect_timeout: 15\n",
+        encoding="utf-8",
+    )
+
+
 def test_cli_help_shows_top_level_commands() -> None:
     result = runner.invoke(app, ["--help"])
 
@@ -31,6 +45,7 @@ def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
         "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
         encoding="utf-8",
     )
+    _write_bridge_config(tmp_path / "conf")
 
     result = runner.invoke(app, ["db", "init"])
 
@@ -53,6 +68,7 @@ def test_run_create_and_list_round_trip(tmp_path, monkeypatch) -> None:
         "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
         encoding="utf-8",
     )
+    _write_bridge_config(tmp_path / "conf")
 
     init_result = runner.invoke(app, ["db", "init"])
     create_result = runner.invoke(

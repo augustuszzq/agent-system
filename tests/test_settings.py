@@ -40,6 +40,9 @@ def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
     assert settings.paths.state_dir == repo_root / "state"
     assert settings.paths.db_path == repo_root / "state" / "autoresearch.db"
     assert settings.remote_root == "/eagle/lc-mpi/Zhiqing/auto-research"
+    assert settings.bridge.server_alive_interval == 60
+    assert settings.bridge.server_alive_count_max == 3
+    assert settings.bridge.connect_timeout == 15
 
 
 def test_env_override_replaces_db_path(tmp_path: Path, monkeypatch) -> None:
@@ -88,3 +91,6 @@ def test_load_settings_reads_bridge_config(tmp_path: Path) -> None:
     assert settings.bridge.host == "polaris-login-04.hsn.cm.polaris.alcf.anl.gov"
     assert settings.bridge.user == "zzq"
     assert settings.bridge.control_path == "~/.ssh/cm-%C"
+    assert settings.bridge.server_alive_interval == 60
+    assert settings.bridge.server_alive_count_max == 3
+    assert settings.bridge.connect_timeout == 15
