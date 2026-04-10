@@ -1,4 +1,8 @@
 from dataclasses import dataclass
+from typing import Literal
+
+
+BridgeState = Literal["DETACHED", "ATTACHED", "STALE"]
 
 
 @dataclass(frozen=True)
@@ -20,7 +24,7 @@ class CommandResult:
 @dataclass(frozen=True)
 class BridgeStatusResult:
     alias: str
-    state: str
+    state: BridgeState
     explanation: str
     command_result: CommandResult | None = None
     control_path_exists: bool | None = None
