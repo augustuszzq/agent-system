@@ -96,6 +96,49 @@ def test_update_job_state_persists_state_and_pbs_metadata(tmp_path: Path) -> Non
     assert row["updated_at"] == updated.updated_at
 
 
+def test_update_job_state_preserves_existing_pbs_metadata_when_omitted(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RunRegistry(db_path)
+
+    created = registry.create_job(
+        run_id="run_demo",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:ncpus=1",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+        exec_host="x1001/0",
+    )
+    updated = registry.update_job_state(job_id=created.job_id, state="RUNNING")
+
+    assert updated.state == "RUNNING"
+    assert updated.pbs_job_id == "123456.polaris-pbs-01"
+    assert updated.exec_host == "x1001/0"
+
+    with connect_db(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT state, pbs_job_id, exec_host
+            FROM jobs
+            WHERE job_id = ?
+            """,
+            (created.job_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row["state"] == "RUNNING"
+    assert row["pbs_job_id"] == "123456.polaris-pbs-01"
+    assert row["exec_host"] == "x1001/0"
+
+
 def test_list_jobs_returns_newest_first(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)
@@ -129,3 +172,48 @@ def test_list_jobs_returns_newest_first(tmp_path: Path) -> None:
     records = registry.list_jobs()
 
     assert [record.job_id for record in records] == [second.job_id, first.job_id]
+
+
+def test_list_jobs_prefers_recent_updates_over_newer_creation(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RunRegistry(db_path)
+
+    timestamps = iter(
+        [
+            "2026-04-15T00:00:00.000001+00:00",
+            "2026-04-15T00:00:00.000002+00:00",
+            "2026-04-15T00:00:00.000003+00:00",
+        ]
+    )
+    registry._now_iso = lambda: next(timestamps)  # type: ignore[method-assign]
+
+    older = registry.create_job(
+        run_id="run_a",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:ncpus=1",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit-a.pbs",
+        stdout_path="/tmp/stdout-a.log",
+        stderr_path="/tmp/stderr-a.log",
+    )
+    newer = registry.create_job(
+        run_id="run_b",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:ncpus=1",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit-b.pbs",
+        stdout_path="/tmp/stdout-b.log",
+        stderr_path="/tmp/stderr-b.log",
+    )
+    updated_older = registry.update_job_state(job_id=older.job_id, state="RUNNING")
+
+    records = registry.list_jobs()
+
+    assert [record.job_id for record in records] == [updated_older.job_id, newer.job_id]

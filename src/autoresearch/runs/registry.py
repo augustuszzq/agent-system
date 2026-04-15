@@ -171,6 +171,22 @@ class RunRegistry:
     ) -> JobRecord:
         updated_at = self._now_iso()
         with connect_db(self._db_path) as conn:
+            current_row = conn.execute(
+                """
+                SELECT job_id, run_id, backend, pbs_job_id, queue, walltime,
+                       filesystems, select_expr, place_expr, exec_host, state,
+                       submit_script_path, stdout_path, stderr_path,
+                       created_at, updated_at
+                FROM jobs
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            if current_row is None:
+                raise KeyError(f"job not found: {job_id}")
+
+            current_pbs_job_id = current_row["pbs_job_id"] if pbs_job_id is None else pbs_job_id
+            current_exec_host = current_row["exec_host"] if exec_host is None else exec_host
             conn.execute(
                 """
                 UPDATE jobs
@@ -180,7 +196,7 @@ class RunRegistry:
                     updated_at = ?
                 WHERE job_id = ?
                 """,
-                (state, pbs_job_id, exec_host, updated_at, job_id),
+                (state, current_pbs_job_id, current_exec_host, updated_at, job_id),
             )
             row = conn.execute(
                 """
@@ -193,8 +209,6 @@ class RunRegistry:
                 """,
                 (job_id,),
             ).fetchone()
-        if row is None:
-            raise KeyError(f"job not found: {job_id}")
         return self._row_to_job_record(row)
 
     def list_jobs(self) -> list[JobRecord]:
@@ -206,7 +220,7 @@ class RunRegistry:
                        submit_script_path, stdout_path, stderr_path,
                        created_at, updated_at
                 FROM jobs
-                ORDER BY created_at DESC, updated_at DESC, job_id DESC
+                ORDER BY updated_at DESC, created_at DESC, job_id DESC
                 """
             ).fetchall()
         return [self._row_to_job_record(row) for row in rows]
