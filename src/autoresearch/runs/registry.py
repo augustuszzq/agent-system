@@ -162,6 +162,23 @@ class RunRegistry:
             )
         return record
 
+    def get_job(self, job_id: str) -> JobRecord:
+        with connect_db(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT job_id, run_id, backend, pbs_job_id, queue, walltime,
+                       filesystems, select_expr, place_expr, exec_host, state,
+                       submit_script_path, stdout_path, stderr_path,
+                       created_at, updated_at
+                FROM jobs
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"job not found: {job_id}")
+        return self._row_to_job_record(row)
+
     def update_job_state(
         self,
         job_id: str,
@@ -210,6 +227,13 @@ class RunRegistry:
                 (job_id,),
             ).fetchone()
         return self._row_to_job_record(row)
+
+    def mark_job_submitted(self, job_id: str, pbs_job_id: str) -> JobRecord:
+        return self.update_job_state(
+            job_id=job_id,
+            state="SUBMITTED",
+            pbs_job_id=pbs_job_id,
+        )
 
     def list_jobs(self) -> list[JobRecord]:
         with connect_db(self._db_path) as conn:

@@ -49,6 +49,30 @@ def test_create_job_persists_draft_record(tmp_path: Path) -> None:
     assert row["updated_at"] == record.updated_at
 
 
+def test_get_job_returns_existing_draft_record(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RunRegistry(db_path)
+
+    created = registry.create_job(
+        run_id="run_demo",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:ncpus=1",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+    )
+
+    record = registry.get_job(created.job_id)
+
+    assert record == created
+    assert record.state == "DRAFT"
+
+
 def test_update_job_state_persists_state_and_pbs_metadata(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)
@@ -94,6 +118,50 @@ def test_update_job_state_persists_state_and_pbs_metadata(tmp_path: Path) -> Non
     assert row["pbs_job_id"] == "123456.polaris-pbs-01"
     assert row["exec_host"] == "x1001/0"
     assert row["updated_at"] == updated.updated_at
+
+
+def test_mark_job_submitted_transitions_to_submitted_and_stores_pbs_job_id(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RunRegistry(db_path)
+
+    created = registry.create_job(
+        run_id="run_demo",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:ncpus=1",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+    )
+
+    submitted = registry.mark_job_submitted(
+        created.job_id, "123456.polaris-pbs-01"
+    )
+
+    assert submitted.job_id == created.job_id
+    assert submitted.state == "SUBMITTED"
+    assert submitted.pbs_job_id == "123456.polaris-pbs-01"
+    assert submitted.updated_at != created.updated_at
+
+    with connect_db(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT state, pbs_job_id
+            FROM jobs
+            WHERE job_id = ?
+            """,
+            (created.job_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row["state"] == "SUBMITTED"
+    assert row["pbs_job_id"] == "123456.polaris-pbs-01"
 
 
 def test_update_job_state_preserves_existing_pbs_metadata_when_omitted(
