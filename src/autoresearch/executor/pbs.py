@@ -77,19 +77,49 @@ def parse_qstat_output(text: str) -> QstatParseResult:
 
 def parse_qstat_json(text: str) -> QstatParseResult:
     payload = json.loads(text)
-    jobs = payload.get("Jobs", {})
+    if not isinstance(payload, dict):
+        raise ValueError("malformed qstat json")
+
+    jobs = payload.get("Jobs")
+    if not isinstance(jobs, dict):
+        raise ValueError("malformed qstat json")
     if not jobs:
         raise ValueError("no jobs in qstat json")
 
     job_id, job_data = next(iter(jobs.items()))
+    if not isinstance(job_data, dict):
+        raise ValueError("malformed qstat json")
+
+    job_state = job_data.get("job_state")
+    if job_state is None:
+        raise ValueError("missing job_state in qstat json")
+    if not isinstance(job_state, str):
+        raise ValueError("malformed qstat json")
+
+    queue = job_data.get("queue")
+    comment = job_data.get("comment")
+    exec_host = job_data.get("exec_host")
+    output_path = job_data.get("Output_Path")
+    error_path = job_data.get("Error_Path")
+
+    if queue is not None and not isinstance(queue, str):
+        raise ValueError("malformed qstat json")
+    if comment is not None and not isinstance(comment, str):
+        raise ValueError("malformed qstat json")
+    if exec_host is not None and not isinstance(exec_host, str):
+        raise ValueError("malformed qstat json")
+    if output_path is not None and not isinstance(output_path, str):
+        raise ValueError("malformed qstat json")
+    if error_path is not None and not isinstance(error_path, str):
+        raise ValueError("malformed qstat json")
     return QstatParseResult(
         pbs_job_id=job_id,
-        state=job_data["job_state"],
-        queue=job_data.get("queue"),
-        comment=job_data.get("comment"),
-        exec_host=job_data.get("exec_host"),
-        stdout_path=_strip_host_prefix(job_data.get("Output_Path")),
-        stderr_path=_strip_host_prefix(job_data.get("Error_Path")),
+        state=job_state,
+        queue=queue,
+        comment=comment,
+        exec_host=exec_host,
+        stdout_path=_strip_host_prefix(output_path),
+        stderr_path=_strip_host_prefix(error_path),
     )
 
 

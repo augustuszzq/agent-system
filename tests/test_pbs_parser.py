@@ -69,6 +69,33 @@ def test_parse_qstat_json_rejects_empty_jobs() -> None:
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        {"Jobs": []},
+        {"Jobs": {"123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": "not-a-mapping"}},
+    ],
+)
+def test_parse_qstat_json_rejects_malformed_jobs_shape(payload: object) -> None:
+    with pytest.raises(ValueError, match="malformed qstat json"):
+        parse_qstat_json(json.dumps(payload))
+
+
+def test_parse_qstat_json_rejects_missing_job_state() -> None:
+    payload = {
+        "Jobs": {
+            "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {
+                "queue": "debug",
+                "comment": "Not Running",
+                "exec_host": "x1001/0",
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="missing job_state in qstat json"):
+        parse_qstat_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
     ("path_value", "expected"),
     [
         (None, None),
