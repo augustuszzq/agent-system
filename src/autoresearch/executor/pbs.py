@@ -64,7 +64,7 @@ def parse_qstat_output(text: str) -> QstatParseResult:
     if not job_id:
         raise ValueError("missing job id in qstat output")
     job_state = values.get("job_state")
-    if job_state is None:
+    if job_state is None or not job_state:
         raise ValueError("missing job_state in qstat output")
 
     return QstatParseResult(
@@ -96,7 +96,7 @@ def parse_qstat_json(text: str) -> QstatParseResult:
     job_state = job_data.get("job_state")
     if job_state is None:
         raise ValueError("missing job_state in qstat json")
-    if not isinstance(job_state, str):
+    if not isinstance(job_state, str) or not job_state.strip():
         raise ValueError("malformed qstat json")
 
     queue = job_data.get("queue")

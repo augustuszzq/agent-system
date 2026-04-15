@@ -63,6 +63,19 @@ def test_parse_qstat_output_rejects_missing_job_state() -> None:
         parse_qstat_output(text)
 
 
+def test_parse_qstat_output_rejects_blank_job_state() -> None:
+    text = "\n".join(
+        [
+            "Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    job_state =   ",
+            "    queue = debug",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="missing job_state in qstat output"):
+        parse_qstat_output(text)
+
+
 def test_parse_qstat_json_extracts_key_fields() -> None:
     text = (FIXTURE_DIR / "qstat_full.json").read_text(encoding="utf-8")
 
@@ -105,6 +118,22 @@ def test_parse_qstat_json_rejects_missing_job_state() -> None:
     }
 
     with pytest.raises(ValueError, match="missing job_state in qstat json"):
+        parse_qstat_json(json.dumps(payload))
+
+
+def test_parse_qstat_json_rejects_blank_job_state() -> None:
+    payload = {
+        "Jobs": {
+            "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {
+                "job_state": "   ",
+                "queue": "debug",
+                "comment": "Not Running",
+                "exec_host": "x1001/0",
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="malformed qstat json"):
         parse_qstat_json(json.dumps(payload))
 
 
