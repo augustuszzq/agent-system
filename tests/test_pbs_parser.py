@@ -165,3 +165,21 @@ def test_render_pbs_script_rejects_missing_output_paths() -> None:
 
     with pytest.raises(ValueError, match="stdout_path and stderr_path must be set"):
         render_pbs_script(request)
+
+
+@pytest.mark.parametrize("path_value", ["", "   "])
+def test_render_pbs_script_rejects_blank_output_paths(path_value: str) -> None:
+    request = PolarisJobRequest(
+        run_id="run_demo",
+        job_name="demo-job",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        select_expr="1:ncpus=1",
+        entrypoint_path="/tmp/entrypoint.sh",
+        stdout_path=path_value,
+        stderr_path="/tmp/stderr.log",
+    )
+
+    with pytest.raises(ValueError, match="stdout_path and stderr_path must be set"):
+        render_pbs_script(request)

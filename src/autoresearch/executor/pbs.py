@@ -127,7 +127,12 @@ def parse_qstat_json(text: str) -> QstatParseResult:
 
 
 def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
-    if request.stdout_path is None or request.stderr_path is None:
+    if (
+        request.stdout_path is None
+        or request.stderr_path is None
+        or not request.stdout_path.strip()
+        or not request.stderr_path.strip()
+    ):
         raise ValueError("stdout_path and stderr_path must be set")
 
     script_text = f"""#!/bin/bash
