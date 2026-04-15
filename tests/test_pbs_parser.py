@@ -4,10 +4,13 @@ from pathlib import Path
 import pytest
 
 from autoresearch.executor.pbs import (
+    _strip_host_prefix,
     parse_qstat_json,
     parse_qstat_output,
     parse_qsub_output,
+    render_pbs_script,
 )
+from autoresearch.schemas import PolarisJobRequest
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -26,6 +29,11 @@ def test_parse_qsub_output_extracts_job_id() -> None:
 def test_parse_qsub_output_rejects_empty_text() -> None:
     with pytest.raises(ValueError, match="empty qsub output"):
         parse_qsub_output("")
+
+
+def test_parse_qsub_output_rejects_malformed_text() -> None:
+    with pytest.raises(ValueError, match="malformed qsub output"):
+        parse_qsub_output("job submitted")
 
 
 def test_parse_qstat_output_extracts_key_fields() -> None:
@@ -58,3 +66,33 @@ def test_parse_qstat_json_extracts_key_fields() -> None:
 def test_parse_qstat_json_rejects_empty_jobs() -> None:
     with pytest.raises(ValueError, match="no jobs in qstat json"):
         parse_qstat_json(json.dumps({"Jobs": {}}))
+
+
+@pytest.mark.parametrize(
+    ("path_value", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log", "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log"),
+        ("polaris-login-04:/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log", "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log"),
+        ("s3://bucket/path", "s3://bucket/path"),
+        ("foo:bar/baz", "foo:bar/baz"),
+    ],
+)
+def test_strip_host_prefix_handles_common_inputs(path_value: str | None, expected: str | None) -> None:
+    assert _strip_host_prefix(path_value) == expected
+
+
+def test_render_pbs_script_rejects_missing_output_paths() -> None:
+    request = PolarisJobRequest(
+        run_id="run_demo",
+        job_name="demo-job",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        select_expr="1:ncpus=1",
+        entrypoint_path="/tmp/entrypoint.sh",
+    )
+
+    with pytest.raises(ValueError, match="stdout_path and stderr_path must be set"):
+        render_pbs_script(request)

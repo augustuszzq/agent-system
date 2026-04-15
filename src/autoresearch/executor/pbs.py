@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from autoresearch.schemas import (
     PolarisJobRequest,
@@ -13,17 +14,27 @@ from autoresearch.schemas import (
 
 
 def _strip_host_prefix(path_value: str | None) -> str | None:
-    if path_value is None:
+    if path_value is None or path_value == "":
         return None
     if ":" not in path_value:
         return path_value
-    return path_value.split(":", 1)[1]
+
+    host_part, path_part = path_value.split(":", 1)
+    if not host_part or path_part.startswith("//") or not path_part.startswith("/"):
+        return path_value
+    return path_part
+
+
+def _looks_like_pbs_job_id(job_id: str) -> bool:
+    return bool(re.fullmatch(r"\d+(?:\.[A-Za-z0-9][A-Za-z0-9._-]*)+", job_id))
 
 
 def parse_qsub_output(text: str) -> QsubParseResult:
     raw_output = text.strip()
     if not raw_output:
         raise ValueError("empty qsub output")
+    if not _looks_like_pbs_job_id(raw_output):
+        raise ValueError("malformed qsub output")
     return QsubParseResult(
         raw_output=raw_output,
         pbs_job_id=raw_output,
@@ -83,6 +94,9 @@ def parse_qstat_json(text: str) -> QstatParseResult:
 
 
 def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
+    if request.stdout_path is None or request.stderr_path is None:
+        raise ValueError("stdout_path and stderr_path must be set")
+
     script_text = f"""#!/bin/bash
 #PBS -A {request.project}
 #PBS -q {request.queue}
