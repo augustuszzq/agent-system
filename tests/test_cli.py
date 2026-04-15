@@ -385,6 +385,62 @@ def test_bridge_exec_uses_bridge_service_and_prints_stdout(monkeypatch) -> None:
     assert result.stdout == "/remote/workdir\n"
 
 
+def test_bridge_exec_preserves_argument_boundaries(monkeypatch) -> None:
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "exec", "--", "printf", "%s", "value with spaces"])
+
+    assert result.exit_code == 0
+    assert fake_service.exec_calls == ["printf %s 'value with spaces'"]
+
+
+def test_bridge_exec_reports_detached_bridge_errors(monkeypatch) -> None:
+    fake_service = FakeBridgeService(
+        status_result=BridgeStatusResult(
+            alias="polaris-relay",
+            state="DETACHED",
+            explanation="No active OpenSSH control master is attached.",
+            command_result=CommandResult(
+                args=("ssh", "-O", "check", "polaris-relay"),
+                returncode=255,
+                stdout="",
+                stderr="Control socket connect(/tmp/cm): No such file or directory",
+                duration_seconds=0.01,
+            ),
+            control_path_exists=None,
+        )
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "exec", "--", "pwd"])
+
+    assert result.exit_code == 1
+    assert "bridge must be ATTACHED before remote operations (state=DETACHED)" in result.stderr
+
+
+def test_bridge_copy_to_reports_path_validation_errors(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(
+        app,
+        [
+            "bridge",
+            "copy-to",
+            "--src",
+            str(tmp_path / "local.txt"),
+            "--dst",
+            "/tmp/outside.txt",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "remote_path must stay within remote_root" in result.stderr
+
+
 def test_remote_bootstrap_force_invokes_helper(monkeypatch) -> None:
     calls: list[bool] = []
 

@@ -1,9 +1,11 @@
 from pathlib import Path
+import shlex
 from typing import Annotated, Optional
 
 import typer
 
 from autoresearch.bridge.remote_exec import (
+    RemoteBridgeError,
     copy_from_remote,
     copy_to_remote,
     execute_remote_command,
@@ -115,14 +117,22 @@ def _echo_failed_command(result: CommandResult) -> None:
         typer.echo(result.stderr, err=True)
 
 
+def _fail_remote_bridge_error(error: RemoteBridgeError) -> None:
+    typer.echo(str(error), err=True)
+    raise typer.Exit(code=1)
+
+
 def run_remote_bootstrap(force: bool) -> None:
     _ = force
-    settings = load_settings()
-    service = build_bridge_service()
-    result = execute_remote_command(
-        service,
-        build_bootstrap_mkdir_command(settings.remote_root),
-    )
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = execute_remote_command(
+            service,
+            build_bootstrap_mkdir_command(settings.remote_root),
+        )
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
     if result.returncode != 0:
         _echo_failed_command(result)
         raise typer.Exit(code=result.returncode)
@@ -183,8 +193,11 @@ def detach_bridge() -> None:
 def exec_bridge(
     remote_command: Annotated[list[str], typer.Argument(..., help="Remote command to run.")],
 ) -> None:
-    service = build_bridge_service()
-    result = execute_remote_command(service, " ".join(remote_command))
+    try:
+        service = build_bridge_service()
+        result = execute_remote_command(service, shlex.join(remote_command))
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
     if result.returncode != 0:
         _echo_failed_command(result)
         raise typer.Exit(code=result.returncode)
@@ -197,9 +210,12 @@ def bridge_copy_to(
     src: Path = typer.Option(..., "--src"),
     dst: str = typer.Option(..., "--dst"),
 ) -> None:
-    settings = load_settings()
-    service = build_bridge_service()
-    result = copy_to_remote(service, src, dst, settings.remote_root)
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = copy_to_remote(service, src, dst, settings.remote_root)
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
     if result.returncode != 0:
         _echo_failed_command(result)
         raise typer.Exit(code=result.returncode)
@@ -210,9 +226,12 @@ def bridge_copy_from(
     src: str = typer.Option(..., "--src"),
     dst: Path = typer.Option(..., "--dst"),
 ) -> None:
-    settings = load_settings()
-    service = build_bridge_service()
-    result = copy_from_remote(service, src, dst, settings.remote_root)
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = copy_from_remote(service, src, dst, settings.remote_root)
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
     if result.returncode != 0:
         _echo_failed_command(result)
         raise typer.Exit(code=result.returncode)
