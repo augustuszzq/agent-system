@@ -19,7 +19,7 @@ def test_parse_qsub_output_extracts_job_id() -> None:
     result = parse_qsub_output(text)
 
     assert result.pbs_job_id == "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov"
-    assert result.raw_output.strip() == text.strip()
+    assert result.raw_output == text.strip()
 
 
 def test_parse_qsub_output_rejects_empty_text() -> None:
@@ -49,7 +49,9 @@ def test_parse_qstat_json_extracts_key_fields() -> None:
     assert result.pbs_job_id == "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov"
     assert result.state == "Q"
     assert result.comment == "Not Running: Insufficient amount of resource: vnode"
+    assert result.exec_host == "x1001/0"
     assert result.stdout_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log"
+    assert result.stderr_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stderr.log"
 
 
 def test_parse_qstat_json_rejects_empty_jobs() -> None:
