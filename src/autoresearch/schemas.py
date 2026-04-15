@@ -55,14 +55,15 @@ class RenderedPBSScript:
 class QsubParseResult:
     raw_output: str
     pbs_job_id: str
+    is_success: bool
 
 
 @dataclass(frozen=True)
 class QstatParseResult:
     pbs_job_id: str
     state: str
-    queue: str | None
-    comment: str | None
-    exec_host: str | None
-    stdout_path: str | None
-    stderr_path: str | None
+    queue: str | None = None
+    comment: str | None = None
+    exec_host: str | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None

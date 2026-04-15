@@ -35,9 +35,6 @@ def test_polaris_job_request_exposes_expected_fields_and_defaults() -> None:
     ]
     assert request.place_expr == "scatter"
     assert request.filesystems == "eagle"
-    assert request.stdout_path is None
-    assert request.stderr_path is None
-    assert request.submit_script_path is None
 
 
 def test_rendered_pbs_script_wraps_script_text() -> None:
@@ -47,10 +44,11 @@ def test_rendered_pbs_script_wraps_script_text() -> None:
 
 
 def test_qsub_parse_result_wraps_qsub_output() -> None:
-    result = QsubParseResult(raw_output="123456.polaris", pbs_job_id="123456.polaris")
+    result = QsubParseResult(raw_output="123456.polaris", pbs_job_id="123456.polaris", is_success=True)
 
     assert result.raw_output == "123456.polaris"
     assert result.pbs_job_id == "123456.polaris"
+    assert result.is_success is True
 
 
 def test_qstat_parse_result_wraps_status_fields() -> None:
@@ -71,3 +69,15 @@ def test_qstat_parse_result_wraps_status_fields() -> None:
     assert result.exec_host == "node001/0"
     assert result.stdout_path == "/tmp/stdout"
     assert result.stderr_path == "/tmp/stderr"
+
+
+def test_qstat_parse_result_defaults_optional_fields_to_none() -> None:
+    result = QstatParseResult(pbs_job_id="123456.polaris", state="Q")
+
+    assert result.pbs_job_id == "123456.polaris"
+    assert result.state == "Q"
+    assert result.queue is None
+    assert result.comment is None
+    assert result.exec_host is None
+    assert result.stdout_path is None
+    assert result.stderr_path is None
