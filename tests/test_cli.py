@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from autoresearch import cli as cli_module
+from autoresearch.bridge.remote_exec import RemoteBridgeError
 from autoresearch.cli import app
 from autoresearch.db import init_db
 from autoresearch.runs.registry import RunRegistry
@@ -301,6 +302,32 @@ def test_job_poll_invokes_helper_and_prints_state(monkeypatch) -> None:
     assert calls == ["job_abc"]
     assert "RUNNING" in result.stdout
     assert "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov" in result.stdout
+
+
+def test_job_submit_probe_propagates_remote_bridge_error(monkeypatch) -> None:
+    def fake_submit_probe_job(
+        *, project: str | None = None, queue: str | None = None, walltime: str | None = None
+    ) -> tuple[str, str, str]:
+        raise RemoteBridgeError("probe bootstrap failed")
+
+    monkeypatch.setattr(cli_module, "submit_probe_job", fake_submit_probe_job)
+
+    result = runner.invoke(app, ["job", "submit-probe"])
+
+    assert result.exit_code == 1
+    assert "probe bootstrap failed" in result.stderr
+
+
+def test_job_poll_propagates_remote_bridge_error(monkeypatch) -> None:
+    def fake_poll_probe_job(job_id: str) -> tuple[str, str]:
+        raise RemoteBridgeError("qstat failed")
+
+    monkeypatch.setattr(cli_module, "poll_probe_job", fake_poll_probe_job)
+
+    result = runner.invoke(app, ["job", "poll", "--job-id", "job_abc"])
+
+    assert result.exit_code == 1
+    assert "qstat failed" in result.stderr
 
 
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:

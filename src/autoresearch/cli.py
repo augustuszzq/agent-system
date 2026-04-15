@@ -186,13 +186,16 @@ def _write_temporary_script(script_text: str, run_id: str) -> Path:
         temp_file.close()
 
 
-def _probe_state_from_pbs_state(pbs_state: str) -> str:
+def _probe_state_from_pbs_state(pbs_state: str, exit_status: int | None = None) -> str:
     normalized = pbs_state.strip().upper()
     state_map = {
         "Q": "QUEUED",
         "R": "RUNNING",
-        "F": "SUCCEEDED",
     }
+    if normalized == "F":
+        if exit_status not in (None, 0):
+            return "FAILED"
+        return "SUCCEEDED"
     return state_map.get(normalized, pbs_state)
 
 
@@ -299,7 +302,7 @@ def poll_probe_job(job_id: str) -> tuple[str, str]:
     except ValueError as exc:
         raise RemoteBridgeError(str(exc)) from exc
 
-    state = _probe_state_from_pbs_state(qstat_parse.state)
+    state = _probe_state_from_pbs_state(qstat_parse.state, qstat_parse.exit_status)
     registry.update_job_state(
         job_id=job_record.job_id,
         state=state,

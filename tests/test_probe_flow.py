@@ -53,11 +53,13 @@ class ProbeBridgeService:
         *,
         qsub_output: str,
         qstat_state: str | None = None,
+        qstat_exit_status: int | None = None,
         mkdir_returncode: int = 0,
         copy_to_returncode: int = 0,
     ) -> None:
         self.qsub_output = qsub_output
         self.qstat_state = qstat_state
+        self.qstat_exit_status = qstat_exit_status
         self.mkdir_returncode = mkdir_returncode
         self.copy_to_returncode = copy_to_returncode
         self.exec_calls: list[str] = []
@@ -97,6 +99,11 @@ class ProbeBridgeService:
                 "Jobs": {
                     self.qsub_output.strip(): {
                         "job_state": self.qstat_state,
+                        **(
+                            {"Exit_status": self.qstat_exit_status}
+                            if self.qstat_exit_status is not None
+                            else {}
+                        ),
                         "queue": "debug",
                         "exec_host": "x1001/0",
                     }
@@ -379,3 +386,116 @@ def test_poll_probe_job_returns_state_and_updates_registry(
 
     updated = registry.get_job(created.job_id)
     assert updated.state == expected_state
+
+
+def test_poll_probe_job_marks_finished_failed_job_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    registry = RunRegistry(settings.paths.db_path)
+    run_record = registry.create_run(RunCreateRequest(run_kind="probe", project="ALCF_PROJECT"))
+    created = registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="prod",
+        walltime="00:20:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path=f"{REMOTE_ROOT}/jobs/{run_record.run_id}/submit.pbs",
+        stdout_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stdout.log",
+        stderr_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+    service = ProbeBridgeService(
+        qsub_output=created.pbs_job_id or "",
+        qstat_state="F",
+        qstat_exit_status=2,
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+
+    state, pbs_job_id = cli_module.poll_probe_job(created.job_id)
+
+    assert pbs_job_id == created.pbs_job_id
+    assert state == "FAILED"
+    updated = registry.get_job(created.job_id)
+    assert updated.state == "FAILED"
+
+
+def test_poll_probe_job_marks_finished_zero_exit_status_as_succeeded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    registry = RunRegistry(settings.paths.db_path)
+    run_record = registry.create_run(RunCreateRequest(run_kind="probe", project="ALCF_PROJECT"))
+    created = registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="prod",
+        walltime="00:20:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path=f"{REMOTE_ROOT}/jobs/{run_record.run_id}/submit.pbs",
+        stdout_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stdout.log",
+        stderr_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+    service = ProbeBridgeService(
+        qsub_output=created.pbs_job_id or "",
+        qstat_state="F",
+        qstat_exit_status=0,
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+
+    state, pbs_job_id = cli_module.poll_probe_job(created.job_id)
+
+    assert pbs_job_id == created.pbs_job_id
+    assert state == "SUCCEEDED"
+    updated = registry.get_job(created.job_id)
+    assert updated.state == "SUCCEEDED"
+
+
+def test_poll_probe_job_marks_finished_success_when_exit_status_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    registry = RunRegistry(settings.paths.db_path)
+    run_record = registry.create_run(RunCreateRequest(run_kind="probe", project="ALCF_PROJECT"))
+    created = registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="prod",
+        walltime="00:20:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path=f"{REMOTE_ROOT}/jobs/{run_record.run_id}/submit.pbs",
+        stdout_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stdout.log",
+        stderr_path=f"{REMOTE_ROOT}/runs/{run_record.run_id}/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+    service = ProbeBridgeService(
+        qsub_output=created.pbs_job_id or "",
+        qstat_state="F",
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+
+    state, pbs_job_id = cli_module.poll_probe_job(created.job_id)
+
+    assert pbs_job_id == created.pbs_job_id
+    assert state == "SUCCEEDED"
+    updated = registry.get_job(created.job_id)
+    assert updated.state == "SUCCEEDED"
