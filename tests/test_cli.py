@@ -60,6 +60,8 @@ class FakeBridgeService:
         detach_result: CommandResult | None = None,
         status_result: BridgeStatusResult | None = None,
         exec_result: CommandResult | None = None,
+        copy_to_result: CommandResult | None = None,
+        copy_from_result: CommandResult | None = None,
     ) -> None:
         self.settings = type("Settings", (), {"alias": alias})()
         self.attach_result = attach_result or CommandResult(
@@ -97,8 +99,24 @@ class FakeBridgeService:
             stderr="",
             duration_seconds=0.01,
         )
+        self.copy_to_result = copy_to_result or CommandResult(
+            args=("scp", "/tmp/local.txt", f"{alias}:/remote/file.txt"),
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0.01,
+        )
+        self.copy_from_result = copy_from_result or CommandResult(
+            args=("scp", f"{alias}:/remote/file.txt", "/tmp/local.txt"),
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0.01,
+        )
         self.calls: list[str] = []
         self.exec_calls: list[str] = []
+        self.copy_to_calls: list[tuple[str, str]] = []
+        self.copy_from_calls: list[tuple[str, str]] = []
 
     def attach(self) -> CommandResult:
         self.calls.append("attach")
@@ -120,6 +138,16 @@ class FakeBridgeService:
         self.calls.append("exec")
         self.exec_calls.append(command)
         return self.exec_result
+
+    def copy_to(self, local_path: str, remote_path: str) -> CommandResult:
+        self.calls.append("copy_to")
+        self.copy_to_calls.append((local_path, remote_path))
+        return self.copy_to_result
+
+    def copy_from(self, remote_path: str, local_path: str) -> CommandResult:
+        self.calls.append("copy_from")
+        self.copy_from_calls.append((remote_path, local_path))
+        return self.copy_from_result
 
 
 def test_cli_help_shows_top_level_commands() -> None:
@@ -441,6 +469,88 @@ def test_bridge_copy_to_reports_path_validation_errors(monkeypatch, tmp_path: Pa
     assert "remote_path must stay within remote_root" in result.stderr
 
 
+def test_bridge_copy_to_uses_bridge_service(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(
+        app,
+        [
+            "bridge",
+            "copy-to",
+            "--src",
+            str(tmp_path / "local.txt"),
+            "--dst",
+            "/eagle/lc-mpi/Zhiqing/auto-research/jobs/probe/entrypoint.sh",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["status", "copy_to"]
+    assert fake_service.copy_to_calls == [
+        (str(tmp_path / "local.txt"), "/eagle/lc-mpi/Zhiqing/auto-research/jobs/probe/entrypoint.sh")
+    ]
+
+
+def test_bridge_copy_from_uses_bridge_service(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    fake_service = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(
+        app,
+        [
+            "bridge",
+            "copy-from",
+            "--src",
+            "/eagle/lc-mpi/Zhiqing/auto-research/runs/probe/stdout.log",
+            "--dst",
+            str(tmp_path / "stdout.log"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["status", "copy_from"]
+    assert fake_service.copy_from_calls == [
+        ("/eagle/lc-mpi/Zhiqing/auto-research/runs/probe/stdout.log", str(tmp_path / "stdout.log"))
+    ]
+
+
+def test_bridge_copy_from_reports_failed_copy_command(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    fake_service = FakeBridgeService(
+        copy_from_result=CommandResult(
+            args=("scp", "polaris-relay:/remote/file.txt", str(tmp_path / "stdout.log")),
+            returncode=7,
+            stdout="",
+            stderr="scp failed",
+            duration_seconds=0.01,
+        )
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(
+        app,
+        [
+            "bridge",
+            "copy-from",
+            "--src",
+            "/eagle/lc-mpi/Zhiqing/auto-research/runs/probe/stdout.log",
+            "--dst",
+            str(tmp_path / "stdout.log"),
+        ],
+    )
+
+    assert result.exit_code == 7
+    assert fake_service.calls == ["status", "copy_from"]
+    assert "Command failed (7): scp polaris-relay:/remote/file.txt" in result.stderr
+    assert "scp failed" in result.stderr
+
+
 def test_remote_bootstrap_force_invokes_helper(monkeypatch) -> None:
     calls: list[bool] = []
 
@@ -454,6 +564,16 @@ def test_remote_bootstrap_force_invokes_helper(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [True]
     assert "Remote bootstrap completed." in result.stdout
+
+
+def test_remote_bootstrap_force_fails_fast(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    result = runner.invoke(app, ["remote", "bootstrap", "--force"])
+
+    assert result.exit_code == 1
+    assert "--force is not implemented until Task 7" in result.stderr
 
 
 def test_bridge_detach_uses_bridge_service(monkeypatch) -> None:

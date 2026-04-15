@@ -123,7 +123,9 @@ def _fail_remote_bridge_error(error: RemoteBridgeError) -> None:
 
 
 def run_remote_bootstrap(force: bool) -> None:
-    _ = force
+    if force:
+        typer.echo("--force is not implemented until Task 7", err=True)
+        raise typer.Exit(code=1)
     try:
         settings = load_settings()
         service = build_bridge_service()

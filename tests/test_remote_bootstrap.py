@@ -230,7 +230,50 @@ def test_run_remote_bootstrap_raises_on_failed_remote_command(monkeypatch, tmp_p
     monkeypatch.setattr(cli_module, "_echo_failed_command", failed_results.append)
 
     with pytest.raises(typer.Exit) as exc_info:
-        cli_module.run_remote_bootstrap(force=True)
+        cli_module.run_remote_bootstrap(force=False)
 
     assert exc_info.value.exit_code == 23
     assert failed_results == [result]
+
+
+def test_run_remote_bootstrap_force_fails_fast_without_remote_exec(
+    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = Settings(
+        app_name="auto-research",
+        paths=type(
+            "Paths",
+            (),
+            {
+                "repo_root": tmp_path,
+                "state_dir": tmp_path / "state",
+                "cache_dir": tmp_path / "cache",
+                "logs_dir": tmp_path / "logs",
+                "db_path": tmp_path / "state" / "autoresearch.db",
+            },
+        )(),
+        remote_root=REMOTE_ROOT,
+        bridge=BridgeSettings(
+            alias="polaris-relay",
+            host="example-host",
+            user="zzq",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        cli_module,
+        "execute_remote_command",
+        lambda service, command: pytest.fail("execute_remote_command should not run"),
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli_module.run_remote_bootstrap(force=True)
+
+    assert exc_info.value.exit_code == 1
+    assert "--force is not implemented until Task 7" in capsys.readouterr().err
