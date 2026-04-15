@@ -161,6 +161,81 @@ def test_detach_uses_mux_exit_operation() -> None:
     assert calls == [("ssh", "-O", "exit", "polaris-relay")]
 
 
+def test_exec_uses_ssh_alias_and_command() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.exec("pwd")
+
+    assert calls == [("ssh", "polaris-relay", "pwd")]
+
+
+def test_copy_to_uses_scp_with_remote_destination() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.copy_to("/tmp/local.txt", "/eagle/demo/local.txt")
+
+    assert calls == [("scp", "/tmp/local.txt", "polaris-relay:/eagle/demo/local.txt")]
+
+
+def test_copy_from_uses_scp_with_remote_source() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_runner(args: tuple[str, ...]) -> CommandResult:
+        calls.append(args)
+        return CommandResult(args=args, returncode=0, stdout="", stderr="", duration_seconds=0.01)
+
+    client = SSHMasterClient(
+        settings=BridgeSettings(
+            alias="polaris-relay",
+            host="host",
+            user="user",
+            control_path="~/.ssh/cm-%C",
+            server_alive_interval=60,
+            server_alive_count_max=3,
+            connect_timeout=15,
+        ),
+        runner=fake_runner,
+    )
+
+    client.copy_from("/eagle/demo/remote.txt", "/tmp/local.txt")
+
+    assert calls == [("scp", "polaris-relay:/eagle/demo/remote.txt", "/tmp/local.txt")]
+
+
 def test_status_uses_health_classification_and_preserves_percent_control_path() -> None:
     calls: list[tuple[str, ...]] = []
 
