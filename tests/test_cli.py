@@ -35,7 +35,11 @@ def _write_bridge_config(conf_dir: Path) -> None:
         "  control_path: ~/.ssh/cm-%C\n"
         "  server_alive_interval: 60\n"
         "  server_alive_count_max: 3\n"
-        "  connect_timeout: 15\n",
+        "  connect_timeout: 15\n"
+        "probe:\n"
+        "  project: demo\n"
+        "  queue: debug\n"
+        "  walltime: 00:10:00\n",
         encoding="utf-8",
     )
 
@@ -55,6 +59,7 @@ class FakeBridgeService:
         check_result: CommandResult | None = None,
         detach_result: CommandResult | None = None,
         status_result: BridgeStatusResult | None = None,
+        exec_result: CommandResult | None = None,
     ) -> None:
         self.settings = type("Settings", (), {"alias": alias})()
         self.attach_result = attach_result or CommandResult(
@@ -85,7 +90,15 @@ class FakeBridgeService:
             command_result=self.check_result,
             control_path_exists=None,
         )
+        self.exec_result = exec_result or CommandResult(
+            args=("ssh", alias, "pwd"),
+            returncode=0,
+            stdout="/remote/workdir\n",
+            stderr="",
+            duration_seconds=0.01,
+        )
         self.calls: list[str] = []
+        self.exec_calls: list[str] = []
 
     def attach(self) -> CommandResult:
         self.calls.append("attach")
@@ -102,6 +115,11 @@ class FakeBridgeService:
     def status(self) -> BridgeStatusResult:
         self.calls.append("status")
         return self.status_result
+
+    def exec(self, command: str) -> CommandResult:
+        self.calls.append("exec")
+        self.exec_calls.append(command)
+        return self.exec_result
 
 
 def test_cli_help_shows_top_level_commands() -> None:
@@ -345,6 +363,41 @@ def test_bridge_status_reports_attached(monkeypatch) -> None:
     assert result.exit_code == 0
     assert fake_service.calls == ["status"]
     assert "Bridge polaris-relay: ATTACHED" in result.stdout
+
+
+def test_bridge_exec_uses_bridge_service_and_prints_stdout(monkeypatch) -> None:
+    fake_service = FakeBridgeService(
+        exec_result=CommandResult(
+            args=("ssh", "polaris-relay", "pwd"),
+            returncode=0,
+            stdout="/remote/workdir\n",
+            stderr="",
+            duration_seconds=0.01,
+        )
+    )
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_service)
+
+    result = runner.invoke(app, ["bridge", "exec", "--", "pwd"])
+
+    assert result.exit_code == 0
+    assert fake_service.calls == ["status", "exec"]
+    assert fake_service.exec_calls == ["pwd"]
+    assert result.stdout == "/remote/workdir\n"
+
+
+def test_remote_bootstrap_force_invokes_helper(monkeypatch) -> None:
+    calls: list[bool] = []
+
+    def fake_run_remote_bootstrap(*, force: bool) -> None:
+        calls.append(force)
+
+    monkeypatch.setattr(cli_module, "run_remote_bootstrap", fake_run_remote_bootstrap)
+
+    result = runner.invoke(app, ["remote", "bootstrap", "--force"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Remote bootstrap completed." in result.stdout
 
 
 def test_bridge_detach_uses_bridge_service(monkeypatch) -> None:
