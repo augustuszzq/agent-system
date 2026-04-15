@@ -19,11 +19,19 @@ class BridgeSettings:
 
 
 @dataclass(frozen=True)
+class ProbeSettings:
+    project: str
+    queue: str
+    walltime: str
+
+
+@dataclass(frozen=True)
 class Settings:
     app_name: str
     paths: AppPaths
     remote_root: str
     bridge: BridgeSettings
+    probe: ProbeSettings
 
 
 def _resolve_path(repo_root: Path, raw_path: str) -> Path:
@@ -72,5 +80,10 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             server_alive_interval=bridge_config["bridge"]["server_alive_interval"],
             server_alive_count_max=bridge_config["bridge"]["server_alive_count_max"],
             connect_timeout=bridge_config["bridge"]["connect_timeout"],
+        ),
+        probe=ProbeSettings(
+            project=bridge_config["probe"]["project"],
+            queue=bridge_config["probe"]["queue"],
+            walltime=bridge_config["probe"]["walltime"],
         ),
     )
