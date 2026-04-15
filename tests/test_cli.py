@@ -191,12 +191,13 @@ def test_job_list_prints_persisted_job_record(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["job", "list"])
 
     assert result.exit_code == 0
-    assert record.job_id in result.stdout
-    assert "run_demo" in result.stdout
-    assert "pbs" in result.stdout
-    assert "-" in result.stdout
-    assert record.state in result.stdout
-    assert record.updated_at in result.stdout
+    row = result.stdout.strip().splitlines()[0].split("\t")
+    assert row[0] == record.job_id
+    assert row[1] == "run_demo"
+    assert row[2] == "pbs"
+    assert row[3] == record.state
+    assert row[4] == "-"
+    assert row[5] == record.updated_at
 
 
 def test_bridge_attach_uses_bridge_service(monkeypatch) -> None:
