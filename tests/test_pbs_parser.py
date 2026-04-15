@@ -20,6 +20,7 @@ def test_parse_qsub_output_extracts_job_id() -> None:
 
     assert result.pbs_job_id == "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov"
     assert result.raw_output == text.strip()
+    assert result.is_success is True
 
 
 def test_parse_qsub_output_rejects_empty_text() -> None:
