@@ -254,6 +254,55 @@ def test_job_render_pbs_uses_configured_remote_root(tmp_path, monkeypatch) -> No
     assert "cd /custom/remote/root/repo" in result.stdout
 
 
+def test_job_submit_probe_invokes_helper_and_prints_ids(monkeypatch) -> None:
+    calls: list[tuple[str | None, str | None, str | None]] = []
+
+    def fake_submit_probe_job(
+        *, project: str | None = None, queue: str | None = None, walltime: str | None = None
+    ) -> tuple[str, str, str]:
+        calls.append((project, queue, walltime))
+        return ("run_123", "job_456", "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov")
+
+    monkeypatch.setattr(cli_module, "submit_probe_job", fake_submit_probe_job)
+
+    result = runner.invoke(
+        app,
+        [
+            "job",
+            "submit-probe",
+            "--project",
+            "CUSTOM_PROJECT",
+            "--queue",
+            "prod",
+            "--walltime",
+            "00:20:00",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("CUSTOM_PROJECT", "prod", "00:20:00")]
+    assert "run_123" in result.stdout
+    assert "job_456" in result.stdout
+    assert "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov" in result.stdout
+
+
+def test_job_poll_invokes_helper_and_prints_state(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_poll_probe_job(job_id: str) -> tuple[str, str]:
+        calls.append(job_id)
+        return ("RUNNING", "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov")
+
+    monkeypatch.setattr(cli_module, "poll_probe_job", fake_poll_probe_job)
+
+    result = runner.invoke(app, ["job", "poll", "--job-id", "job_abc"])
+
+    assert result.exit_code == 0
+    assert calls == ["job_abc"]
+    assert "RUNNING" in result.stdout
+    assert "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov" in result.stdout
+
+
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
     _write_repo_config(tmp_path)
@@ -566,14 +615,21 @@ def test_remote_bootstrap_force_invokes_helper(monkeypatch) -> None:
     assert "Remote bootstrap completed." in result.stdout
 
 
-def test_remote_bootstrap_force_fails_fast(monkeypatch, tmp_path: Path) -> None:
+def test_remote_bootstrap_force_reports_completion(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
     _write_repo_config(tmp_path)
+    calls: list[bool] = []
+
+    def fake_run_remote_bootstrap(*, force: bool) -> None:
+        calls.append(force)
+
+    monkeypatch.setattr(cli_module, "run_remote_bootstrap", fake_run_remote_bootstrap)
 
     result = runner.invoke(app, ["remote", "bootstrap", "--force"])
 
-    assert result.exit_code == 1
-    assert "--force is not implemented until Task 7" in result.stderr
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Remote bootstrap completed." in result.stdout
 
 
 def test_bridge_detach_uses_bridge_service(monkeypatch) -> None:

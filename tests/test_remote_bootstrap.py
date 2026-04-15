@@ -1,4 +1,5 @@
 from pathlib import Path
+import shlex
 
 import pytest
 import typer
@@ -12,7 +13,11 @@ from autoresearch.bridge.remote_exec import (
     ensure_remote_path_within_root,
     execute_remote_command,
 )
-from autoresearch.bridge.remote_fs import build_bootstrap_files, build_bootstrap_mkdir_command
+from autoresearch.bridge.remote_fs import (
+    bootstrap_remote_root,
+    build_bootstrap_files,
+    build_bootstrap_mkdir_command,
+)
 from autoresearch.schemas import BridgeStatusResult, CommandResult
 from autoresearch.settings import BridgeSettings, ProbeSettings, Settings
 
@@ -55,6 +60,31 @@ class FakeRemoteClient:
     def copy_from(self, remote_path: str, local_path: str) -> CommandResult:
         self.copy_from_calls.append((remote_path, local_path))
         return _result("scp", remote_path, local_path)
+
+
+class BootstrapRecordingClient(FakeRemoteClient):
+    def __init__(self, *, exists: set[str]) -> None:
+        super().__init__(state="ATTACHED")
+        self.exists = exists
+        self.copied_payloads: dict[str, str] = {}
+
+    def exec(self, command: str) -> CommandResult:
+        self.exec_calls.append(command)
+        if command.startswith("test -f "):
+            remote_path = shlex.split(command)[2]
+            return CommandResult(
+                args=("ssh", "polaris-relay", command),
+                returncode=0 if remote_path in self.exists else 1,
+                stdout="",
+                stderr="",
+                duration_seconds=0.01,
+            )
+        return _result("ssh", "polaris-relay", command)
+
+    def copy_to(self, local_path: str, remote_path: str) -> CommandResult:
+        self.copy_to_calls.append((local_path, remote_path))
+        self.copied_payloads[remote_path] = Path(local_path).read_text(encoding="utf-8")
+        return _result("scp", local_path, remote_path)
 
 
 def test_execute_remote_command_requires_attached_bridge() -> None:
@@ -155,6 +185,64 @@ def test_bootstrap_helpers_reject_shell_metacharacters_in_remote_root(remote_roo
         build_bootstrap_files(remote_root)
 
 
+def test_bootstrap_remote_root_skips_existing_managed_files_when_not_forced() -> None:
+    client = BootstrapRecordingClient(exists={f"{REMOTE_ROOT}/README.remote.md"})
+
+    bootstrap_remote_root(client, REMOTE_ROOT, force=False)
+
+    assert client.exec_calls[0] == build_bootstrap_mkdir_command(REMOTE_ROOT)
+    assert client.exec_calls[1:] == [
+        f"test -f {REMOTE_ROOT}/README.remote.md",
+        f"test -f {REMOTE_ROOT}/jobs/probe/entrypoint.sh",
+    ]
+    assert len(client.copy_to_calls) == 1
+    assert client.copy_to_calls[0][1] == f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh"
+    assert client.copied_payloads[f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh"].startswith("#!/bin/bash")
+    assert f"{REMOTE_ROOT}/README.remote.md" not in client.copied_payloads
+
+
+def test_bootstrap_remote_root_overwrites_managed_files_when_forced() -> None:
+    client = BootstrapRecordingClient(
+        exists={
+            f"{REMOTE_ROOT}/README.remote.md",
+            f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh",
+        }
+    )
+
+    bootstrap_remote_root(client, REMOTE_ROOT, force=True)
+
+    assert client.exec_calls[0] == build_bootstrap_mkdir_command(REMOTE_ROOT)
+    assert len(client.copy_to_calls) == 2
+    assert [remote_path for _, remote_path in client.copy_to_calls] == [
+        f"{REMOTE_ROOT}/README.remote.md",
+        f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh",
+    ]
+    assert client.copied_payloads[f"{REMOTE_ROOT}/README.remote.md"].startswith("# Auto Research Remote Root")
+    assert client.copied_payloads[f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh"].startswith("#!/bin/bash")
+
+
+def test_bootstrap_remote_root_raises_on_mkdir_failure(monkeypatch) -> None:
+    client = FakeRemoteClient(state="ATTACHED")
+    calls: list[str] = []
+
+    def fake_execute_remote_command(service: object, command: str) -> CommandResult:
+        calls.append(command)
+        return CommandResult(
+            args=("ssh", "polaris-relay", command),
+            returncode=23,
+            stdout="",
+            stderr="permission denied",
+            duration_seconds=0.01,
+        )
+
+    monkeypatch.setattr("autoresearch.bridge.remote_fs.execute_remote_command", fake_execute_remote_command)
+
+    with pytest.raises(RemoteBridgeError, match="permission denied"):
+        bootstrap_remote_root(client, REMOTE_ROOT, force=False)
+
+    assert calls == [build_bootstrap_mkdir_command(REMOTE_ROOT)]
+
+
 def test_run_remote_bootstrap_executes_mkdir_command(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         app_name="auto-research",
@@ -182,27 +270,19 @@ def test_run_remote_bootstrap_executes_mkdir_command(monkeypatch, tmp_path: Path
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
     )
     service = object()
-    result = CommandResult(
-        args=("ssh", "polaris-relay", "mkdir"),
-        returncode=0,
-        stdout="",
-        stderr="",
-        duration_seconds=0.01,
-    )
-    calls: list[tuple[object, str]] = []
+    calls: list[tuple[object, bool]] = []
 
     monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
     monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
-
-    def fake_execute_remote_command(service_arg: object, command: str) -> CommandResult:
-        calls.append((service_arg, command))
-        return result
-
-    monkeypatch.setattr(cli_module, "execute_remote_command", fake_execute_remote_command)
+    monkeypatch.setattr(
+        cli_module,
+        "bootstrap_remote_root",
+        lambda service_arg, remote_root, *, force: calls.append((service_arg, force)),
+    )
 
     cli_module.run_remote_bootstrap(force=False)
 
-    assert calls == [(service, build_bootstrap_mkdir_command(REMOTE_ROOT))]
+    assert calls == [(service, False)]
 
 
 def test_run_remote_bootstrap_raises_on_failed_remote_command(monkeypatch, tmp_path: Path) -> None:
@@ -231,29 +311,28 @@ def test_run_remote_bootstrap_raises_on_failed_remote_command(monkeypatch, tmp_p
         ),
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
     )
-    result = CommandResult(
-        args=("ssh", "polaris-relay", "mkdir"),
-        returncode=23,
-        stdout="",
-        stderr="permission denied",
-        duration_seconds=0.01,
-    )
     failed_results: list[CommandResult] = []
 
     monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
     monkeypatch.setattr(cli_module, "build_bridge_service", lambda: object())
-    monkeypatch.setattr(cli_module, "execute_remote_command", lambda service, command: result)
+    monkeypatch.setattr(
+        cli_module,
+        "bootstrap_remote_root",
+        lambda service, remote_root, *, force: (_ for _ in ()).throw(
+            RemoteBridgeError("bootstrap failed")
+        ),
+    )
     monkeypatch.setattr(cli_module, "_echo_failed_command", failed_results.append)
 
     with pytest.raises(typer.Exit) as exc_info:
         cli_module.run_remote_bootstrap(force=False)
 
-    assert exc_info.value.exit_code == 23
-    assert failed_results == [result]
+    assert exc_info.value.exit_code == 1
+    assert failed_results == []
 
 
-def test_run_remote_bootstrap_force_fails_fast_without_remote_exec(
-    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_run_remote_bootstrap_force_invokes_bootstrap_helper(
+    monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
         app_name="auto-research",
@@ -281,15 +360,15 @@ def test_run_remote_bootstrap_force_fails_fast_without_remote_exec(
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
     )
 
+    calls: list[bool] = []
+
     monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
     monkeypatch.setattr(
         cli_module,
-        "execute_remote_command",
-        lambda service, command: pytest.fail("execute_remote_command should not run"),
+        "bootstrap_remote_root",
+        lambda service, remote_root, *, force: calls.append(force),
     )
 
-    with pytest.raises(typer.Exit) as exc_info:
-        cli_module.run_remote_bootstrap(force=True)
+    cli_module.run_remote_bootstrap(force=True)
 
-    assert exc_info.value.exit_code == 1
-    assert "--force is not implemented until Task 7" in capsys.readouterr().err
+    assert calls == [True]
