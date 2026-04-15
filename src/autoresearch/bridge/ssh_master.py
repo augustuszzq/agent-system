@@ -48,6 +48,15 @@ class SSHMasterClient:
     def detach(self) -> CommandResult:
         return self.runner(("ssh", "-O", "exit", self.settings.alias))
 
+    def exec(self, command: str) -> CommandResult:
+        return self.runner(("ssh", self.settings.alias, command))
+
+    def copy_to(self, local_path: str, remote_path: str) -> CommandResult:
+        return self.runner(("scp", local_path, f"{self.settings.alias}:{remote_path}"))
+
+    def copy_from(self, remote_path: str, local_path: str) -> CommandResult:
+        return self.runner(("scp", f"{self.settings.alias}:{remote_path}", local_path))
+
     def status(self) -> BridgeStatusResult:
         check_result = self.check()
         return classify_bridge_status(
