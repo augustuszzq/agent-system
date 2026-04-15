@@ -244,6 +244,8 @@ def submit_probe_job(
 
     temp_script = _write_temporary_script(rendered.script_text, run_record.run_id)
     try:
+        submit_parent_dir = str(Path(request.submit_script_path).parent)
+        execute_remote_command(service, f"mkdir -p {shlex.quote(submit_parent_dir)}")
         copy_to_remote(service, temp_script, request.submit_script_path, settings.remote_root)
         qsub_command = shlex.join(build_qsub_command(request.submit_script_path))
         qsub_result = execute_remote_command(service, qsub_command)

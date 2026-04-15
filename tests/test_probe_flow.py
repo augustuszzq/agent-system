@@ -52,6 +52,7 @@ class ProbeBridgeService:
         self.qstat_state = qstat_state
         self.exec_calls: list[str] = []
         self.copy_to_calls: list[tuple[str, str]] = []
+        self.timeline: list[tuple[str, str]] = []
 
     def status(self) -> BridgeStatusResult:
         return BridgeStatusResult(
@@ -61,7 +62,16 @@ class ProbeBridgeService:
         )
 
     def exec(self, command: str) -> CommandResult:
+        self.timeline.append(("exec", command))
         self.exec_calls.append(command)
+        if command.startswith("mkdir -p "):
+            return CommandResult(
+                args=("ssh", "polaris-relay", command),
+                returncode=0,
+                stdout="",
+                stderr="",
+                duration_seconds=0.01,
+            )
         if command.startswith("qsub "):
             return CommandResult(
                 args=("ssh", "polaris-relay", command),
@@ -92,6 +102,7 @@ class ProbeBridgeService:
         raise AssertionError(f"unexpected command: {command}")
 
     def copy_to(self, local_path: str, remote_path: str) -> CommandResult:
+        self.timeline.append(("copy_to", remote_path))
         self.copy_to_calls.append((local_path, remote_path))
         return CommandResult(
             args=("scp", local_path, remote_path),
@@ -187,8 +198,9 @@ def test_submit_probe_job_persists_submission_and_updates_registry(
 
     assert bootstrap_calls == [(REMOTE_ROOT, False)]
     assert pbs_job_id == "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov"
-    assert service.exec_calls[0] == "qsub " + "/eagle/demo/jobs/" + f"{run_id}/submit.pbs"
-    assert len(service.exec_calls) == 1
+    assert service.exec_calls[0] == f"mkdir -p {REMOTE_ROOT}/jobs/{run_id}"
+    assert service.exec_calls[1] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
+    assert len(service.exec_calls) == 2
     assert len(service.copy_to_calls) == 1
     assert service.copy_to_calls[0][1] == f"{REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
 
@@ -203,6 +215,36 @@ def test_submit_probe_job_persists_submission_and_updates_registry(
     assert job_record.pbs_job_id == pbs_job_id
     assert job_record.queue == "prod"
     assert job_record.walltime == "00:20:00"
+
+
+def test_submit_probe_job_creates_submit_directory_before_upload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+    monkeypatch.setattr(
+        cli_module,
+        "bootstrap_remote_root",
+        lambda client, remote_root, *, force: None,
+    )
+
+    run_id, _, _ = cli_module.submit_probe_job(
+        project="CUSTOM_PROJECT",
+        queue="prod",
+        walltime="00:20:00",
+    )
+
+    assert service.timeline[0] == ("exec", f"mkdir -p {REMOTE_ROOT}/jobs/{run_id}")
+    assert service.timeline[1] == ("copy_to", f"{REMOTE_ROOT}/jobs/{run_id}/submit.pbs")
+    assert service.timeline[2][0] == "exec"
+    assert service.timeline[2][1] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
 
 
 @pytest.mark.parametrize(
