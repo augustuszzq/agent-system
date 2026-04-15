@@ -76,6 +76,23 @@ def test_parse_qstat_output_rejects_blank_job_state() -> None:
         parse_qstat_output(text)
 
 
+def test_parse_qstat_output_rejects_multiple_jobs() -> None:
+    text = "\n".join(
+        [
+            "Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    job_state = R",
+            "    queue = debug",
+            "",
+            "Job Id: 123457.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    job_state = Q",
+            "    queue = prod",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="expected exactly one job in qstat output"):
+        parse_qstat_output(text)
+
+
 def test_parse_qstat_json_extracts_key_fields() -> None:
     text = (FIXTURE_DIR / "qstat_full.json").read_text(encoding="utf-8")
 
@@ -256,3 +273,45 @@ def test_render_pbs_script_shell_quotes_entrypoint_path() -> None:
     rendered = render_pbs_script(request)
 
     assert "bash '/tmp/entrypoint with spaces.sh'" in rendered.script_text
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected"),
+    [
+        ("run_id", "run$(whoami)", "run_id contains unsafe characters"),
+        ("project", "demo\n#PBS -q prod", "project contains unsafe characters"),
+        ("queue", "debug;rm -rf /", "queue contains unsafe characters"),
+        ("walltime", "00:10:00$(id)", "walltime contains unsafe characters"),
+        ("select_expr", "1:system=polaris;uname", "select_expr contains unsafe characters"),
+        ("place_expr", "scatter$(id)", "place_expr contains unsafe characters"),
+        ("filesystems", "eagle,home;id", "filesystems contains unsafe characters"),
+    ],
+)
+def test_render_pbs_script_rejects_unsafe_directive_values(
+    field_name: str,
+    value: str,
+    expected: str,
+) -> None:
+    request = PolarisJobRequest(
+        run_id="run_demo",
+        job_name="demo-job",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        filesystems="eagle",
+        entrypoint_path="/tmp/entrypoint.sh",
+        remote_root="/eagle/lc-mpi/Zhiqing/auto-research",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+    )
+    request = request.__class__(
+        **{
+            **request.__dict__,
+            field_name: value,
+        }
+    )
+
+    with pytest.raises(ValueError, match=expected):
+        render_pbs_script(request)

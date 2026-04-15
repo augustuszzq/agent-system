@@ -30,6 +30,9 @@ def _looks_like_pbs_job_id(job_id: str) -> bool:
     return bool(re.fullmatch(r"\d+(?:\.[A-Za-z0-9][A-Za-z0-9._-]*)+", job_id))
 
 
+_SAFE_DIRECTIVE_VALUE_RE = re.compile(r"^[A-Za-z0-9._:=,+-]+$")
+
+
 def parse_qsub_output(text: str) -> QsubParseResult:
     raw_output = text.strip()
     if not raw_output:
@@ -53,6 +56,8 @@ def parse_qstat_output(text: str) -> QstatParseResult:
             continue
 
         if line.startswith("Job Id:"):
+            if job_id is not None:
+                raise ValueError("expected exactly one job in qstat output")
             job_id = line.split(":", 1)[1].strip()
             continue
 
@@ -141,6 +146,12 @@ def _require_no_whitespace(value: str, field_name: str) -> str:
     return value
 
 
+def _require_safe_directive_value(value: str, field_name: str) -> str:
+    if not _SAFE_DIRECTIVE_VALUE_RE.fullmatch(value):
+        raise ValueError(f"{field_name} contains unsafe characters")
+    return value
+
+
 def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     if (
         request.stdout_path is None
@@ -150,10 +161,37 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     ):
         raise ValueError("stdout_path and stderr_path must be set")
 
-    run_id = _require_no_whitespace(_require_non_empty(request.run_id, "run_id"), "run_id")
-    job_name = _require_no_whitespace(
-        _require_non_empty(request.job_name, "job_name"),
+    run_id = _require_safe_directive_value(
+        _require_no_whitespace(_require_non_empty(request.run_id, "run_id"), "run_id"),
+        "run_id",
+    )
+    job_name = _require_safe_directive_value(
+        _require_no_whitespace(_require_non_empty(request.job_name, "job_name"), "job_name"),
         "job_name",
+    )
+    project = _require_safe_directive_value(
+        _require_non_empty(request.project, "project"),
+        "project",
+    )
+    queue = _require_safe_directive_value(
+        _require_non_empty(request.queue, "queue"),
+        "queue",
+    )
+    walltime = _require_safe_directive_value(
+        _require_non_empty(request.walltime, "walltime"),
+        "walltime",
+    )
+    select_expr = _require_safe_directive_value(
+        _require_non_empty(request.select_expr, "select_expr"),
+        "select_expr",
+    )
+    place_expr = _require_safe_directive_value(
+        _require_non_empty(request.place_expr, "place_expr"),
+        "place_expr",
+    )
+    filesystems = _require_safe_directive_value(
+        _require_non_empty(request.filesystems, "filesystems"),
+        "filesystems",
     )
     stdout_path = _require_no_whitespace(
         _require_non_empty(request.stdout_path, "stdout_path"),
@@ -171,12 +209,12 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     repo_dir = f"{remote_root}/repo"
 
     script_text = f"""#!/bin/bash
-#PBS -A {request.project}
-#PBS -q {request.queue}
-#PBS -l select={request.select_expr}
-#PBS -l place={request.place_expr}
-#PBS -l walltime={request.walltime}
-#PBS -l filesystems={request.filesystems}
+#PBS -A {project}
+#PBS -q {queue}
+#PBS -l select={select_expr}
+#PBS -l place={place_expr}
+#PBS -l walltime={walltime}
+#PBS -l filesystems={filesystems}
 #PBS -N {job_name}
 #PBS -k doe
 #PBS -o {stdout_path}

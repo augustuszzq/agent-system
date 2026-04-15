@@ -159,6 +159,36 @@ def test_build_polaris_job_request_rejects_run_id_with_internal_whitespace() -> 
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("run_id", "run$(whoami)", "run_id contains unsafe characters"),
+        ("project", "demo\n#PBS -q prod", "project contains unsafe characters"),
+        ("queue", "debug;rm -rf /", "queue contains unsafe characters"),
+        ("walltime", "00:10:00$(id)", "walltime contains unsafe characters"),
+        ("select_expr", "1:system=polaris;uname", "select_expr contains unsafe characters"),
+        ("place_expr", "scatter$(id)", "place_expr contains unsafe characters"),
+        ("filesystems", "eagle,home;id", "filesystems contains unsafe characters"),
+    ],
+)
+def test_build_polaris_job_request_rejects_unsafe_directive_values(
+    field: str,
+    value: str,
+    expected: str,
+) -> None:
+    kwargs = {
+        "run_id": "run_demo",
+        "project": "demo",
+        "queue": "debug",
+        "walltime": "00:10:00",
+        "entrypoint_path": "/tmp/entrypoint.sh",
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=expected):
+        build_polaris_job_request(**kwargs)
+
+
 def test_render_pbs_script_uses_derived_output_paths() -> None:
     request = build_polaris_job_request(
         run_id="run_demo",
