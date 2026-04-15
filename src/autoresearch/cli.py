@@ -1,7 +1,16 @@
-from typing import Optional
+from pathlib import Path
+import shlex
+from typing import Annotated, Optional
 
 import typer
 
+from autoresearch.bridge.remote_exec import (
+    RemoteBridgeError,
+    copy_from_remote,
+    copy_to_remote,
+    execute_remote_command,
+)
+from autoresearch.bridge.remote_fs import build_bootstrap_mkdir_command
 from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import init_db
 from autoresearch.executor.pbs import render_pbs_script
@@ -16,11 +25,13 @@ db_app = typer.Typer(help="Database commands.")
 run_app = typer.Typer(help="Run registry commands.")
 job_app = typer.Typer(help="Job helpers.")
 bridge_app = typer.Typer(help="ALCF bridge commands.")
+remote_app = typer.Typer(help="Remote environment commands.")
 
 app.add_typer(db_app, name="db")
 app.add_typer(run_app, name="run")
 app.add_typer(job_app, name="job")
 app.add_typer(bridge_app, name="bridge")
+app.add_typer(remote_app, name="remote")
 
 
 @db_app.command("init")
@@ -106,6 +117,29 @@ def _echo_failed_command(result: CommandResult) -> None:
         typer.echo(result.stderr, err=True)
 
 
+def _fail_remote_bridge_error(error: RemoteBridgeError) -> None:
+    typer.echo(str(error), err=True)
+    raise typer.Exit(code=1)
+
+
+def run_remote_bootstrap(force: bool) -> None:
+    if force:
+        typer.echo("--force is not implemented until Task 7", err=True)
+        raise typer.Exit(code=1)
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = execute_remote_command(
+            service,
+            build_bootstrap_mkdir_command(settings.remote_root),
+        )
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    if result.returncode != 0:
+        _echo_failed_command(result)
+        raise typer.Exit(code=result.returncode)
+
+
 @bridge_app.command("attach")
 def attach_bridge() -> None:
     service = build_bridge_service()
@@ -155,6 +189,62 @@ def detach_bridge() -> None:
 
     _echo_failed_command(result)
     raise typer.Exit(code=result.returncode)
+
+
+@bridge_app.command("exec")
+def exec_bridge(
+    remote_command: Annotated[list[str], typer.Argument(..., help="Remote command to run.")],
+) -> None:
+    try:
+        service = build_bridge_service()
+        result = execute_remote_command(service, shlex.join(remote_command))
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    if result.returncode != 0:
+        _echo_failed_command(result)
+        raise typer.Exit(code=result.returncode)
+    if result.stdout:
+        typer.echo(result.stdout, nl=False)
+
+
+@bridge_app.command("copy-to")
+def bridge_copy_to(
+    src: Path = typer.Option(..., "--src"),
+    dst: str = typer.Option(..., "--dst"),
+) -> None:
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = copy_to_remote(service, src, dst, settings.remote_root)
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    if result.returncode != 0:
+        _echo_failed_command(result)
+        raise typer.Exit(code=result.returncode)
+
+
+@bridge_app.command("copy-from")
+def bridge_copy_from(
+    src: str = typer.Option(..., "--src"),
+    dst: Path = typer.Option(..., "--dst"),
+) -> None:
+    try:
+        settings = load_settings()
+        service = build_bridge_service()
+        result = copy_from_remote(service, src, dst, settings.remote_root)
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    if result.returncode != 0:
+        _echo_failed_command(result)
+        raise typer.Exit(code=result.returncode)
+
+
+@remote_app.command("bootstrap")
+def remote_bootstrap(
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    run_remote_bootstrap(force=force)
+    typer.echo("Remote bootstrap completed.")
 
 
 def main() -> None:
