@@ -15,12 +15,12 @@ Phase 2 does not rewrite SSH config and does not automate MFA.
 
 ## Phase 3B remote probe workflow
 
-Use the bridge and remote CLI from the repo root:
+Use the bridge and remote CLI from the repo root. These commands require an already attached bridge:
 
 ```bash
 python -m autoresearch.cli bridge exec -- "pwd"
-python -m autoresearch.cli bridge copy-to --src local.txt --dst <remote_root>/tmp/local.txt
-python -m autoresearch.cli bridge copy-from --src <remote_root>/runs/<run_id>/probe.log --dst /tmp/probe.log
+python -m autoresearch.cli bridge copy-to --src local.txt --dst <remote_root>/manifests/local.txt
+python -m autoresearch.cli bridge copy-from --src <remote_root>/runs/<run_id>/stdout.log --dst /tmp/probe.log
 python -m autoresearch.cli remote bootstrap
 python -m autoresearch.cli job submit-probe
 python -m autoresearch.cli job poll --job-id <job_id>
@@ -30,9 +30,9 @@ Command behavior:
 
 1. `bridge exec -- "pwd"`
    Runs a single remote command through the attached bridge. This is the narrow remote exec path used by operators and by the probe workflow.
-2. `bridge copy-to --src local.txt --dst <remote_root>/tmp/local.txt`
+2. `bridge copy-to --src local.txt --dst <remote_root>/manifests/local.txt`
    Uploads a local file into the managed remote root.
-3. `bridge copy-from --src <remote_root>/runs/<run_id>/probe.log --dst /tmp/probe.log`
+3. `bridge copy-from --src <remote_root>/runs/<run_id>/stdout.log --dst /tmp/probe.log`
    Downloads a file from the managed remote root to the local machine.
 4. `remote bootstrap`
    Creates the managed Eagle root layout and the built-in probe entrypoint if they are missing.
