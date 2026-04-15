@@ -28,3 +28,41 @@ class BridgeStatusResult:
     explanation: str
     command_result: CommandResult | None = None
     control_path_exists: bool | None = None
+
+
+@dataclass(frozen=True)
+class PolarisJobRequest:
+    run_id: str
+    job_name: str
+    project: str
+    queue: str
+    walltime: str
+    select_expr: str
+    entrypoint_path: str
+    place_expr: str = "scatter"
+    filesystems: str = "eagle"
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    submit_script_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RenderedPBSScript:
+    script_text: str
+
+
+@dataclass(frozen=True)
+class QsubParseResult:
+    raw_output: str
+    pbs_job_id: str
+
+
+@dataclass(frozen=True)
+class QstatParseResult:
+    pbs_job_id: str
+    state: str
+    queue: str | None
+    comment: str | None
+    exec_host: str | None
+    stdout_path: str | None
+    stderr_path: str | None
