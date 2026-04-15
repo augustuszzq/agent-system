@@ -4,6 +4,8 @@ from typer.testing import CliRunner
 
 from autoresearch import cli as cli_module
 from autoresearch.cli import app
+from autoresearch.db import init_db
+from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import BridgeStatusResult, CommandResult
 
 
@@ -109,6 +111,7 @@ def test_cli_help_shows_top_level_commands() -> None:
     assert "db" in result.stdout
     assert "run" in result.stdout
     assert "bridge" in result.stdout
+    assert "job" in result.stdout
 
 
 def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
@@ -138,6 +141,141 @@ def test_run_create_and_list_round_trip(tmp_path, monkeypatch) -> None:
     assert create_result.exit_code == 0
     assert "local-debug" in list_result.stdout
     assert "demo" in list_result.stdout
+
+
+def test_job_render_pbs_prints_expected_script() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "job",
+            "render-pbs",
+            "--run-id",
+            "run_demo",
+            "--project",
+            "demo",
+            "--queue",
+            "debug",
+            "--walltime",
+            "00:10:00",
+            "--entrypoint-path",
+            "/tmp/entrypoint.sh",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "#PBS -A demo" in result.stdout
+    assert "#PBS -l filesystems=eagle" in result.stdout
+    assert "/tmp/entrypoint.sh" in result.stdout
+
+
+def test_job_render_pbs_uses_configured_remote_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    (tmp_path / "conf" / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /custom/remote/root\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "job",
+            "render-pbs",
+            "--run-id",
+            "run_demo",
+            "--project",
+            "demo",
+            "--queue",
+            "debug",
+            "--walltime",
+            "00:10:00",
+            "--entrypoint-path",
+            "/tmp/entrypoint.sh",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "#PBS -o /custom/remote/root/runs/run_demo/stdout.log" in result.stdout
+    assert "#PBS -e /custom/remote/root/runs/run_demo/stderr.log" in result.stdout
+    assert "export AUTORESEARCH_REMOTE_ROOT=/custom/remote/root" in result.stdout
+    assert "cd /custom/remote/root/repo" in result.stdout
+
+
+def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    (tmp_path / "conf" / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /custom/remote root\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "job",
+            "render-pbs",
+            "--run-id",
+            "run_demo",
+            "--project",
+            "demo",
+            "--queue",
+            "debug",
+            "--walltime",
+            "00:10:00",
+            "--entrypoint-path",
+            "/tmp/entrypoint.sh",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert str(result.exception) == "remote_root must not contain whitespace"
+
+
+def test_job_list_prints_persisted_job_record(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    record = registry.create_job(
+        run_id="run_demo",
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+    )
+
+    result = runner.invoke(app, ["job", "list"])
+
+    assert result.exit_code == 0
+    row = result.stdout.strip().splitlines()[0].split("\t")
+    assert row[0] == record.job_id
+    assert row[1] == "run_demo"
+    assert row[2] == "pbs"
+    assert row[3] == record.state
+    assert row[4] == "-"
+    assert row[5] == record.updated_at
 
 
 def test_bridge_attach_uses_bridge_service(monkeypatch) -> None:

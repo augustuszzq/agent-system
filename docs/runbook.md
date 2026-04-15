@@ -35,6 +35,17 @@ Command behavior:
 4. `bridge detach`
    Closes the control master with `ssh -O exit <alias>`. If no master exists, the CLI reports `DETACHED` instead of pretending success.
 
+## Local PBS executor commands
+
+Use the local PBS helpers from the repo root:
+
+```bash
+python -m autoresearch.cli job list
+python -m autoresearch.cli job render-pbs --run-id run_demo --project demo --queue debug --walltime 01:00:00 --entrypoint-path /path/from/your/configured/remote_root/jobs/run_demo/entrypoint.sh
+```
+
+`job list` prints the local registry view of draft rows and rows with scheduler metadata and state. `job render-pbs` prints the rendered PBS script only; it does not submit anything. Real submission remains a Phase 3B task.
+
 ## Failure handling
 
 Expected operator-visible cases:

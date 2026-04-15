@@ -1,9 +1,30 @@
 # Architecture
 
-`auto-research` currently has two implemented layers:
+`auto-research` currently has three implemented layers:
 
 1. The local control-plane foundation from Phase 0 + Phase 1
 2. The narrow ALCF bridge from Phase 2
+3. The local PBS executor from Phase 3A
+
+## Local PBS executor
+
+Phase 3A adds a local PBS executor layer that models Polaris PBS behavior without live submission. It is used to build, render, and inspect job records locally so the control plane can validate PBS wiring before any real bridge-driven submission exists.
+
+Current executor and registry modules:
+
+- `src/autoresearch/executor/polaris.py`
+  - normalizes `filesystems=eagle` and `place=scatter`
+  - derives stdout, stderr, and submit-script paths under the configured `remote_root` (default `/eagle/lc-mpi/Zhiqing/auto-research/`)
+- `src/autoresearch/executor/pbs.py`
+  - renders PBS scripts
+  - parses `qsub`
+  - parses `qstat -f`
+  - parses `qstat -fF JSON`
+- `src/autoresearch/runs/registry.py`
+  - persists draft job records
+  - stores scheduler metadata and state on existing rows
+
+Phase 3A stays local-only. It does not call the ALCF bridge for real submission.
 
 ## Local foundation
 

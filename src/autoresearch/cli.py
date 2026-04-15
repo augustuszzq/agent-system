@@ -4,6 +4,8 @@ import typer
 
 from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import init_db
+from autoresearch.executor.pbs import render_pbs_script
+from autoresearch.executor.polaris import build_polaris_job_request
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import CommandResult, RunCreateRequest
 from autoresearch.settings import load_settings
@@ -12,10 +14,12 @@ from autoresearch.settings import load_settings
 app = typer.Typer(help="Auto Research control plane CLI.")
 db_app = typer.Typer(help="Database commands.")
 run_app = typer.Typer(help="Run registry commands.")
+job_app = typer.Typer(help="Job helpers.")
 bridge_app = typer.Typer(help="ALCF bridge commands.")
 
 app.add_typer(db_app, name="db")
 app.add_typer(run_app, name="run")
+app.add_typer(job_app, name="job")
 app.add_typer(bridge_app, name="bridge")
 
 
@@ -49,6 +53,38 @@ def list_runs() -> None:
             f"{record.run_id}\t{record.run_kind}\t{record.project}\t"
             f"{record.status}\t{record.created_at}"
         )
+
+
+@job_app.command("list")
+def list_jobs() -> None:
+    settings = load_settings()
+    registry = RunRegistry(settings.paths.db_path)
+    for record in registry.list_jobs():
+        typer.echo(
+            f"{record.job_id}\t{record.run_id}\t{record.backend}\t{record.state}\t"
+            f"{record.pbs_job_id or '-'}\t{record.updated_at}"
+        )
+
+
+@job_app.command("render-pbs")
+def render_job_pbs(
+    run_id: str = typer.Option(..., "--run-id"),
+    project: str = typer.Option(..., "--project"),
+    queue: str = typer.Option(..., "--queue"),
+    walltime: str = typer.Option(..., "--walltime"),
+    entrypoint_path: str = typer.Option(..., "--entrypoint-path"),
+) -> None:
+    settings = load_settings()
+    request = build_polaris_job_request(
+        run_id=run_id,
+        project=project,
+        queue=queue,
+        walltime=walltime,
+        entrypoint_path=entrypoint_path,
+        remote_root=settings.remote_root,
+    )
+    rendered = render_pbs_script(request)
+    typer.echo(rendered.script_text, nl=False)
 
 
 def build_bridge_service() -> SSHMasterClient:
