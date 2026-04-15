@@ -50,6 +50,19 @@ def test_parse_qstat_output_extracts_key_fields() -> None:
     assert result.stderr_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stderr.log"
 
 
+def test_parse_qstat_output_rejects_missing_job_state() -> None:
+    text = "\n".join(
+        [
+            "Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    queue = debug",
+            "    exec_host = x1001/0",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="missing job_state in qstat output"):
+        parse_qstat_output(text)
+
+
 def test_parse_qstat_json_extracts_key_fields() -> None:
     text = (FIXTURE_DIR / "qstat_full.json").read_text(encoding="utf-8")
 

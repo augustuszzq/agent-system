@@ -63,10 +63,13 @@ def parse_qstat_output(text: str) -> QstatParseResult:
 
     if not job_id:
         raise ValueError("missing job id in qstat output")
+    job_state = values.get("job_state")
+    if job_state is None:
+        raise ValueError("missing job_state in qstat output")
 
     return QstatParseResult(
         pbs_job_id=job_id,
-        state=values["job_state"],
+        state=job_state,
         queue=values.get("queue"),
         comment=values.get("comment"),
         exec_host=values.get("exec_host"),
