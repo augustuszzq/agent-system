@@ -39,6 +39,7 @@ class PolarisJobRequest:
     walltime: str
     select_expr: str
     entrypoint_path: str
+    remote_root: str
     place_expr: str = "scatter"
     filesystems: str = "eagle"
     stdout_path: str | None = None

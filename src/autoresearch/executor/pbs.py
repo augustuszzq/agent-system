@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 
 from autoresearch.schemas import (
     PolarisJobRequest,
@@ -88,6 +89,8 @@ def parse_qstat_json(text: str) -> QstatParseResult:
         raise ValueError("malformed qstat json")
     if not jobs:
         raise ValueError("no jobs in qstat json")
+    if len(jobs) != 1:
+        raise ValueError("expected exactly one job in qstat json")
 
     job_id, job_data = next(iter(jobs.items()))
     if not isinstance(job_data, dict):
@@ -126,6 +129,18 @@ def parse_qstat_json(text: str) -> QstatParseResult:
     )
 
 
+def _require_non_empty(value: str, field_name: str) -> str:
+    if not value or not value.strip():
+        raise ValueError(f"{field_name} must be non-empty")
+    return value.strip()
+
+
+def _require_no_whitespace(value: str, field_name: str) -> str:
+    if any(char.isspace() for char in value):
+        raise ValueError(f"{field_name} must not contain whitespace")
+    return value
+
+
 def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     if (
         request.stdout_path is None
@@ -135,6 +150,15 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     ):
         raise ValueError("stdout_path and stderr_path must be set")
 
+    run_id = _require_no_whitespace(_require_non_empty(request.run_id, "run_id"), "run_id")
+    job_name = _require_no_whitespace(
+        _require_non_empty(request.job_name, "job_name"),
+        "job_name",
+    )
+    remote_root = _require_non_empty(request.remote_root, "remote_root")
+    run_dir = f"{remote_root}/runs/{run_id}"
+    repo_dir = f"{remote_root}/repo"
+
     script_text = f"""#!/bin/bash
 #PBS -A {request.project}
 #PBS -q {request.queue}
@@ -142,20 +166,20 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
 #PBS -l place={request.place_expr}
 #PBS -l walltime={request.walltime}
 #PBS -l filesystems={request.filesystems}
-#PBS -N {request.job_name}
+#PBS -N {job_name}
 #PBS -k doe
 #PBS -o {request.stdout_path}
 #PBS -e {request.stderr_path}
 
 set -euo pipefail
 
-cd /eagle/lc-mpi/Zhiqing/auto-research/repo
+cd {shlex.quote(repo_dir)}
 
-export RUN_ID={request.run_id}
-export AUTORESEARCH_REMOTE_ROOT=/eagle/lc-mpi/Zhiqing/auto-research
-export RUN_DIR=/eagle/lc-mpi/Zhiqing/auto-research/runs/{request.run_id}
+export RUN_ID={run_id}
+export AUTORESEARCH_REMOTE_ROOT={shlex.quote(remote_root)}
+export RUN_DIR={shlex.quote(run_dir)}
 mkdir -p "$RUN_DIR"
 
-bash {request.entrypoint_path}
+bash {shlex.quote(request.entrypoint_path)}
 """
     return RenderedPBSScript(script_text=script_text)

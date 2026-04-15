@@ -94,6 +94,18 @@ def test_parse_qstat_json_rejects_empty_jobs() -> None:
         parse_qstat_json(json.dumps({"Jobs": {}}))
 
 
+def test_parse_qstat_json_rejects_multiple_jobs() -> None:
+    payload = {
+        "Jobs": {
+            "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {"job_state": "Q"},
+            "123457.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {"job_state": "R"},
+        }
+    }
+
+    with pytest.raises(ValueError, match="expected exactly one job in qstat json"):
+        parse_qstat_json(json.dumps(payload))
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -161,6 +173,7 @@ def test_render_pbs_script_rejects_missing_output_paths() -> None:
         walltime="00:10:00",
         select_expr="1:ncpus=1",
         entrypoint_path="/tmp/entrypoint.sh",
+        remote_root="/eagle/lc-mpi/Zhiqing/auto-research",
     )
 
     with pytest.raises(ValueError, match="stdout_path and stderr_path must be set"):
@@ -177,9 +190,29 @@ def test_render_pbs_script_rejects_blank_output_paths(path_value: str) -> None:
         walltime="00:10:00",
         select_expr="1:ncpus=1",
         entrypoint_path="/tmp/entrypoint.sh",
+        remote_root="/eagle/lc-mpi/Zhiqing/auto-research",
         stdout_path=path_value,
         stderr_path="/tmp/stderr.log",
     )
 
     with pytest.raises(ValueError, match="stdout_path and stderr_path must be set"):
         render_pbs_script(request)
+
+
+def test_render_pbs_script_shell_quotes_entrypoint_path() -> None:
+    request = PolarisJobRequest(
+        run_id="run_demo",
+        job_name="demo-job",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        select_expr="1:ncpus=1",
+        entrypoint_path="/tmp/entrypoint with spaces.sh",
+        remote_root="/remote/root",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+    )
+
+    rendered = render_pbs_script(request)
+
+    assert "bash '/tmp/entrypoint with spaces.sh'" in rendered.script_text

@@ -74,12 +74,14 @@ def render_job_pbs(
     walltime: str = typer.Option(..., "--walltime"),
     entrypoint_path: str = typer.Option(..., "--entrypoint-path"),
 ) -> None:
+    settings = load_settings()
     request = build_polaris_job_request(
         run_id=run_id,
         project=project,
         queue=queue,
         walltime=walltime,
         entrypoint_path=entrypoint_path,
+        remote_root=settings.remote_root,
     )
     rendered = render_pbs_script(request)
     typer.echo(rendered.script_text, nl=False)

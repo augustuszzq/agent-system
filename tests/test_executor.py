@@ -22,6 +22,7 @@ def test_build_polaris_job_request_derives_paths_and_defaults() -> None:
     assert request.queue == "debug"
     assert request.walltime == "00:10:00"
     assert request.entrypoint_path == "/tmp/entrypoint.sh"
+    assert request.remote_root == REMOTE_ROOT
     assert request.filesystems == "eagle"
     assert request.place_expr == "scatter"
     assert request.select_expr == "1:system=polaris"
@@ -44,6 +45,7 @@ def test_build_polaris_job_request_normalizes_whitespace_in_required_fields() ->
     assert request.queue == "debug"
     assert request.walltime == "00:10:00"
     assert request.entrypoint_path == "/tmp/entrypoint.sh"
+    assert request.remote_root == REMOTE_ROOT
     assert request.job_name == "run_demo"
     assert request.stdout_path == f"{REMOTE_ROOT}/runs/run_demo/stdout.log"
     assert request.stderr_path == f"{REMOTE_ROOT}/runs/run_demo/stderr.log"
@@ -62,6 +64,22 @@ def test_build_polaris_job_request_falls_back_to_run_id_for_blank_job_name() -> 
 
     assert request.run_id == "run_demo"
     assert request.job_name == "run_demo"
+
+
+def test_build_polaris_job_request_uses_configured_remote_root_for_derived_paths() -> None:
+    request = build_polaris_job_request(
+        run_id="run_demo",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        entrypoint_path="/tmp/entrypoint.sh",
+        remote_root="/custom/remote/root",
+    )
+
+    assert request.remote_root == "/custom/remote/root"
+    assert request.stdout_path == "/custom/remote/root/runs/run_demo/stdout.log"
+    assert request.stderr_path == "/custom/remote/root/runs/run_demo/stderr.log"
+    assert request.submit_script_path == "/custom/remote/root/jobs/run_demo/submit.pbs"
 
 
 @pytest.mark.parametrize(
@@ -118,6 +136,17 @@ def test_build_polaris_job_request_rejects_blank_queue_and_entrypoint_path(
         build_polaris_job_request(**kwargs)
 
 
+def test_build_polaris_job_request_rejects_run_id_with_internal_whitespace() -> None:
+    with pytest.raises(ValueError, match="run_id must not contain whitespace"):
+        build_polaris_job_request(
+            run_id="run demo",
+            project="demo",
+            queue="debug",
+            walltime="00:10:00",
+            entrypoint_path="/tmp/entrypoint.sh",
+        )
+
+
 def test_render_pbs_script_uses_derived_output_paths() -> None:
     request = build_polaris_job_request(
         run_id="run_demo",
@@ -132,3 +161,4 @@ def test_render_pbs_script_uses_derived_output_paths() -> None:
     assert f"#PBS -o {REMOTE_ROOT}/runs/run_demo/stdout.log" in rendered.script_text
     assert f"#PBS -e {REMOTE_ROOT}/runs/run_demo/stderr.log" in rendered.script_text
     assert "#PBS -l filesystems=eagle" in rendered.script_text
+    assert "export AUTORESEARCH_REMOTE_ROOT=/eagle/lc-mpi/Zhiqing/auto-research" in rendered.script_text
