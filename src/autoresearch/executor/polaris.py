@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from autoresearch.schemas import PolarisJobRequest
+from autoresearch.settings import ProbeSettings
 
 
 REMOTE_ROOT = "/eagle/lc-mpi/Zhiqing/auto-research"
@@ -105,4 +106,27 @@ def build_polaris_job_request(
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         submit_script_path=submit_script_path,
+    )
+
+
+def build_probe_job_request(
+    *,
+    run_id: str,
+    entrypoint_path: str,
+    probe_settings: ProbeSettings,
+    remote_root: str = REMOTE_ROOT,
+    queue: str | None = None,
+    walltime: str | None = None,
+    job_name: str | None = None,
+) -> PolarisJobRequest:
+    """Build the built-in probe request from configured defaults and overrides."""
+
+    return build_polaris_job_request(
+        run_id=run_id,
+        project=probe_settings.project,
+        queue=probe_settings.queue if queue is None else queue,
+        walltime=probe_settings.walltime if walltime is None else walltime,
+        entrypoint_path=entrypoint_path,
+        remote_root=remote_root,
+        job_name=job_name,
     )

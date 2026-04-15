@@ -152,6 +152,14 @@ def _require_safe_directive_value(value: str, field_name: str) -> str:
     return value
 
 
+def build_qsub_command(submit_script_path: str) -> tuple[str, str]:
+    return ("qsub", submit_script_path)
+
+
+def build_qstat_command(job_id: str) -> tuple[str, str, str, str]:
+    return ("qstat", "-fF", "JSON", job_id)
+
+
 def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
     if (
         request.stdout_path is None
