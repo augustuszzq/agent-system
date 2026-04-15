@@ -40,7 +40,10 @@ def build_polaris_job_request(
     queue = _require_non_empty(queue, "queue")
     walltime = _require_non_empty(walltime, "walltime")
     entrypoint_path = _require_non_empty(entrypoint_path, "entrypoint_path")
-    remote_root = _require_non_empty(remote_root, "remote_root")
+    remote_root = _require_no_whitespace(
+        _require_non_empty(remote_root, "remote_root"),
+        "remote_root",
+    )
 
     resolved_job_name = run_id
     if job_name is not None and job_name.strip():

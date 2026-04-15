@@ -155,7 +155,10 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
         _require_non_empty(request.job_name, "job_name"),
         "job_name",
     )
-    remote_root = _require_non_empty(request.remote_root, "remote_root")
+    remote_root = _require_no_whitespace(
+        _require_non_empty(request.remote_root, "remote_root"),
+        "remote_root",
+    )
     run_dir = f"{remote_root}/runs/{run_id}"
     repo_dir = f"{remote_root}/repo"
 

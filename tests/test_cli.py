@@ -208,6 +208,44 @@ def test_job_render_pbs_uses_configured_remote_root(tmp_path, monkeypatch) -> No
     assert "cd /custom/remote/root/repo" in result.stdout
 
 
+def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    (tmp_path / "conf" / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /custom/remote root\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "job",
+            "render-pbs",
+            "--run-id",
+            "run_demo",
+            "--project",
+            "demo",
+            "--queue",
+            "debug",
+            "--walltime",
+            "00:10:00",
+            "--entrypoint-path",
+            "/tmp/entrypoint.sh",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert str(result.exception) == "remote_root must not contain whitespace"
+
+
 def test_job_list_prints_persisted_job_record(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))

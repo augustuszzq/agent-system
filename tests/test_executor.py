@@ -82,6 +82,18 @@ def test_build_polaris_job_request_uses_configured_remote_root_for_derived_paths
     assert request.submit_script_path == "/custom/remote/root/jobs/run_demo/submit.pbs"
 
 
+def test_build_polaris_job_request_rejects_remote_root_with_internal_whitespace() -> None:
+    with pytest.raises(ValueError, match="remote_root must not contain whitespace"):
+        build_polaris_job_request(
+            run_id="run_demo",
+            project="demo",
+            queue="debug",
+            walltime="00:10:00",
+            entrypoint_path="/tmp/entrypoint.sh",
+            remote_root="/custom/remote root",
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
@@ -162,3 +174,24 @@ def test_render_pbs_script_uses_derived_output_paths() -> None:
     assert f"#PBS -e {REMOTE_ROOT}/runs/run_demo/stderr.log" in rendered.script_text
     assert "#PBS -l filesystems=eagle" in rendered.script_text
     assert "export AUTORESEARCH_REMOTE_ROOT=/eagle/lc-mpi/Zhiqing/auto-research" in rendered.script_text
+
+
+def test_render_pbs_script_rejects_remote_root_with_internal_whitespace() -> None:
+    request = build_polaris_job_request(
+        run_id="run_demo",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        entrypoint_path="/tmp/entrypoint.sh",
+    )
+    request = request.__class__(
+        **{
+            **request.__dict__,
+            "remote_root": "/custom/remote root",
+            "stdout_path": "/custom/remote root/runs/run_demo/stdout.log",
+            "stderr_path": "/custom/remote root/runs/run_demo/stderr.log",
+        }
+    )
+
+    with pytest.raises(ValueError, match="remote_root must not contain whitespace"):
+        render_pbs_script(request)
