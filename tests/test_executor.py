@@ -30,6 +30,40 @@ def test_build_polaris_job_request_derives_paths_and_defaults() -> None:
     assert request.submit_script_path == f"{REMOTE_ROOT}/jobs/run_demo/submit.pbs"
 
 
+def test_build_polaris_job_request_normalizes_whitespace_in_required_fields() -> None:
+    request = build_polaris_job_request(
+        run_id="  run_demo  ",
+        project="  demo  ",
+        queue="  debug  ",
+        walltime="  00:10:00  ",
+        entrypoint_path="  /tmp/entrypoint.sh  ",
+    )
+
+    assert request.run_id == "run_demo"
+    assert request.project == "demo"
+    assert request.queue == "debug"
+    assert request.walltime == "00:10:00"
+    assert request.entrypoint_path == "/tmp/entrypoint.sh"
+    assert request.job_name == "run_demo"
+    assert request.stdout_path == f"{REMOTE_ROOT}/runs/run_demo/stdout.log"
+    assert request.stderr_path == f"{REMOTE_ROOT}/runs/run_demo/stderr.log"
+    assert request.submit_script_path == f"{REMOTE_ROOT}/jobs/run_demo/submit.pbs"
+
+
+def test_build_polaris_job_request_falls_back_to_run_id_for_blank_job_name() -> None:
+    request = build_polaris_job_request(
+        run_id="  run_demo  ",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        entrypoint_path="/tmp/entrypoint.sh",
+        job_name="   ",
+    )
+
+    assert request.run_id == "run_demo"
+    assert request.job_name == "run_demo"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
@@ -40,6 +74,33 @@ def test_build_polaris_job_request_derives_paths_and_defaults() -> None:
     ],
 )
 def test_build_polaris_job_request_rejects_blank_required_fields(
+    field: str,
+    value: str,
+    expected: str,
+) -> None:
+    kwargs = {
+        "run_id": "run_demo",
+        "project": "demo",
+        "queue": "debug",
+        "walltime": "00:10:00",
+        "entrypoint_path": "/tmp/entrypoint.sh",
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=expected):
+        build_polaris_job_request(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("queue", "", "queue must be non-empty"),
+        ("queue", "   ", "queue must be non-empty"),
+        ("entrypoint_path", "", "entrypoint_path must be non-empty"),
+        ("entrypoint_path", "   ", "entrypoint_path must be non-empty"),
+    ],
+)
+def test_build_polaris_job_request_rejects_blank_queue_and_entrypoint_path(
     field: str,
     value: str,
     expected: str,

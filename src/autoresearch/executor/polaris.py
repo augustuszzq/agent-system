@@ -11,7 +11,7 @@ REMOTE_ROOT = "/eagle/lc-mpi/Zhiqing/auto-research"
 def _require_non_empty(value: str, field_name: str) -> str:
     if not value or not value.strip():
         raise ValueError(f"{field_name} must be non-empty")
-    return value
+    return value.strip()
 
 
 def build_polaris_job_request(
@@ -30,9 +30,14 @@ def build_polaris_job_request(
 
     run_id = _require_non_empty(run_id, "run_id")
     project = _require_non_empty(project, "project")
+    queue = _require_non_empty(queue, "queue")
     walltime = _require_non_empty(walltime, "walltime")
+    entrypoint_path = _require_non_empty(entrypoint_path, "entrypoint_path")
 
-    resolved_job_name = job_name if job_name is not None else run_id
+    resolved_job_name = run_id
+    if job_name is not None and job_name.strip():
+        resolved_job_name = job_name.strip()
+
     stdout_path = f"{REMOTE_ROOT}/runs/{run_id}/stdout.log"
     stderr_path = f"{REMOTE_ROOT}/runs/{run_id}/stderr.log"
     submit_script_path = f"{REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
