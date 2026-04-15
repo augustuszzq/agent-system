@@ -1,9 +1,10 @@
 # Architecture
 
-`auto-research` currently has two implemented layers:
+`auto-research` currently has three implemented layers:
 
 1. The local control-plane foundation from Phase 0 + Phase 1
 2. The narrow ALCF bridge from Phase 2
+3. The local PBS executor from Phase 3A
 
 ## Local PBS executor
 
@@ -21,7 +22,7 @@ Current executor and registry modules:
   - parses `qstat -fF JSON`
 - `src/autoresearch/runs/registry.py`
   - persists draft job records
-  - persists scheduler-derived job records
+  - stores scheduler metadata and state on existing rows
 
 Phase 3A stays local-only. It does not call the ALCF bridge for real submission.
 
