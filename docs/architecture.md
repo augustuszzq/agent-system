@@ -14,7 +14,7 @@ Current executor and registry modules:
 
 - `src/autoresearch/executor/polaris.py`
   - normalizes `filesystems=eagle` and `place=scatter`
-  - derives stdout, stderr, and submit-script paths under `/eagle/lc-mpi/Zhiqing/auto-research/`
+  - derives stdout, stderr, and submit-script paths under the configured `remote_root` (default `/eagle/lc-mpi/Zhiqing/auto-research/`)
 - `src/autoresearch/executor/pbs.py`
   - renders PBS scripts
   - parses `qsub`
