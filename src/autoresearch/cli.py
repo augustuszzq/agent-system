@@ -193,7 +193,9 @@ def _probe_state_from_pbs_state(pbs_state: str, exit_status: int | None = None) 
         "R": "RUNNING",
     }
     if normalized == "F":
-        if exit_status not in (None, 0):
+        if exit_status is None:
+            return pbs_state
+        if exit_status != 0:
             return "FAILED"
         return "SUCCEEDED"
     return state_map.get(normalized, pbs_state)
@@ -260,6 +262,17 @@ def submit_probe_job(
             raise RemoteBridgeError(
                 copy_result.stderr.strip()
                 or f"failed to upload submit script: {request.submit_script_path}"
+            )
+
+        run_log_parent_dir = str(Path(request.stdout_path).parent)
+        mkdir_result = execute_remote_command(
+            service,
+            f"mkdir -p {shlex.quote(run_log_parent_dir)}",
+        )
+        if mkdir_result.returncode != 0:
+            raise RemoteBridgeError(
+                mkdir_result.stderr.strip()
+                or f"failed to create run log directory: {run_log_parent_dir}"
             )
 
         qsub_command = shlex.join(build_qsub_command(request.submit_script_path))

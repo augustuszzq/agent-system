@@ -43,7 +43,7 @@ Implementation boundaries:
 
 - `src/autoresearch/bridge/remote_exec.py`
   - wraps remote command execution and file transfer behind the attached bridge
-  - enforces that remote paths stay within the configured remote root
+  - applies lexical path checks so remote paths stay within the configured remote root; it does not resolve remote symlinks or other runtime filesystem indirections
 - `src/autoresearch/bridge/remote_fs.py`
   - creates the managed Eagle root layout
   - writes the managed `README.remote.md` and built-in probe entrypoint

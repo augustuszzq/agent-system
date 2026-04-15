@@ -216,8 +216,9 @@ def test_submit_probe_job_persists_submission_and_updates_registry(
     assert bootstrap_calls == [(REMOTE_ROOT, False)]
     assert pbs_job_id == "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov"
     assert service.exec_calls[0] == f"mkdir -p {REMOTE_ROOT}/jobs/{run_id}"
-    assert service.exec_calls[1] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
-    assert len(service.exec_calls) == 2
+    assert service.exec_calls[1] == f"mkdir -p {REMOTE_ROOT}/runs/{run_id}"
+    assert service.exec_calls[2] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
+    assert len(service.exec_calls) == 3
     assert len(service.copy_to_calls) == 1
     assert service.copy_to_calls[0][1] == f"{REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
 
@@ -260,8 +261,8 @@ def test_submit_probe_job_creates_submit_directory_before_upload(
 
     assert service.timeline[0] == ("exec", f"mkdir -p {REMOTE_ROOT}/jobs/{run_id}")
     assert service.timeline[1] == ("copy_to", f"{REMOTE_ROOT}/jobs/{run_id}/submit.pbs")
-    assert service.timeline[2][0] == "exec"
-    assert service.timeline[2][1] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
+    assert service.timeline[2] == ("exec", f"mkdir -p {REMOTE_ROOT}/runs/{run_id}")
+    assert service.timeline[3] == ("exec", f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs")
 
 
 def test_submit_probe_job_raises_on_submit_directory_mkdir_failure(
@@ -288,6 +289,62 @@ def test_submit_probe_job_raises_on_submit_directory_mkdir_failure(
 
     assert len(service.exec_calls) == 1
     assert service.exec_calls[0].startswith("mkdir -p /eagle/demo/jobs/run_")
+
+
+def test_submit_probe_job_raises_on_run_log_directory_mkdir_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+
+    class RunLogMkdirFailureProbeBridgeService(ProbeBridgeService):
+        def __init__(self) -> None:
+            super().__init__(
+                qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            )
+            self.mkdir_calls = 0
+
+        def exec(self, command: str) -> CommandResult:
+            if command.startswith("mkdir -p "):
+                self.mkdir_calls += 1
+                self.timeline.append(("exec", command))
+                self.exec_calls.append(command)
+                if self.mkdir_calls == 2:
+                    return CommandResult(
+                        args=("ssh", "polaris-relay", command),
+                        returncode=23,
+                        stdout="",
+                        stderr="mkdir failed",
+                        duration_seconds=0.01,
+                    )
+                return CommandResult(
+                    args=("ssh", "polaris-relay", command),
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                    duration_seconds=0.01,
+                )
+            return super().exec(command)
+
+    service = RunLogMkdirFailureProbeBridgeService()
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+
+    with pytest.raises(RemoteBridgeError, match="mkdir failed"):
+        cli_module.submit_probe_job(
+            project="CUSTOM_PROJECT",
+            queue="prod",
+            walltime="00:20:00",
+        )
+
+    assert len(service.exec_calls) == 2
+    assert service.exec_calls[0].startswith("mkdir -p /eagle/demo/jobs/run_")
+    assert service.exec_calls[1].startswith(f"mkdir -p {REMOTE_ROOT}/runs/run_")
+    assert len(service.copy_to_calls) == 1
+    assert service.copy_to_calls[0][1].startswith(f"{REMOTE_ROOT}/jobs/run_")
 
 
 def test_submit_probe_job_raises_on_submit_script_upload_failure(
@@ -343,7 +400,6 @@ def test_submit_probe_job_raises_on_malformed_qsub_output(
     [
         ("Q", "QUEUED"),
         ("R", "RUNNING"),
-        ("F", "SUCCEEDED"),
         ("X", "X"),
     ],
 )
@@ -464,7 +520,7 @@ def test_poll_probe_job_marks_finished_zero_exit_status_as_succeeded(
     assert updated.state == "SUCCEEDED"
 
 
-def test_poll_probe_job_marks_finished_success_when_exit_status_missing(
+def test_poll_probe_job_preserves_finished_state_when_exit_status_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -496,6 +552,6 @@ def test_poll_probe_job_marks_finished_success_when_exit_status_missing(
     state, pbs_job_id = cli_module.poll_probe_job(created.job_id)
 
     assert pbs_job_id == created.pbs_job_id
-    assert state == "SUCCEEDED"
+    assert state == "F"
     updated = registry.get_job(created.job_id)
-    assert updated.state == "SUCCEEDED"
+    assert updated.state == "F"

@@ -62,6 +62,7 @@ def build_bootstrap_mkdir_command(remote_root: str) -> str:
         f"mkdir -p {normalized_root} "
         f"{normalized_root}/jobs "
         f"{normalized_root}/jobs/probe "
+        f"{normalized_root}/repo "
         f"{normalized_root}/runs "
         f"{normalized_root}/manifests"
     )

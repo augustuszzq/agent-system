@@ -154,6 +154,7 @@ def test_build_bootstrap_mkdir_command_returns_expected_directories() -> None:
         "mkdir -p /eagle/lc-mpi/Zhiqing/auto-research "
         "/eagle/lc-mpi/Zhiqing/auto-research/jobs "
         "/eagle/lc-mpi/Zhiqing/auto-research/jobs/probe "
+        "/eagle/lc-mpi/Zhiqing/auto-research/repo "
         "/eagle/lc-mpi/Zhiqing/auto-research/runs "
         "/eagle/lc-mpi/Zhiqing/auto-research/manifests"
     )
