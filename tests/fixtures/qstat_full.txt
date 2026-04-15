@@ -1,0 +1,8 @@
+Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov
+    Job_Name = demo-job
+    job_state = R
+    queue = debug
+    exec_host = x1001/0
+    comment = Job run at Fri Apr 10 at 12:34 on (x1001:ncpus=32)
+    Output_Path = polaris-login-04:/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log
+    Error_Path = polaris-login-04:/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stderr.log
