@@ -188,8 +188,8 @@ def test_render_pbs_script_rejects_remote_root_with_internal_whitespace() -> Non
         **{
             **request.__dict__,
             "remote_root": "/custom/remote root",
-            "stdout_path": "/custom/remote root/runs/run_demo/stdout.log",
-            "stderr_path": "/custom/remote root/runs/run_demo/stderr.log",
+            "stdout_path": "/tmp/stdout.log",
+            "stderr_path": "/tmp/stderr.log",
         }
     )
 

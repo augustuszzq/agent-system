@@ -199,6 +199,46 @@ def test_render_pbs_script_rejects_blank_output_paths(path_value: str) -> None:
         render_pbs_script(request)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "stdout_path", "stderr_path", "expected"),
+    [
+        (
+            "stdout_path",
+            "/tmp/stdout path.log",
+            "/tmp/stderr.log",
+            "stdout_path must not contain whitespace",
+        ),
+        (
+            "stderr_path",
+            "/tmp/stdout.log",
+            "/tmp/stderr path.log",
+            "stderr_path must not contain whitespace",
+        ),
+    ],
+)
+def test_render_pbs_script_rejects_output_paths_with_internal_whitespace(
+    field_name: str,
+    stdout_path: str,
+    stderr_path: str,
+    expected: str,
+) -> None:
+    request = PolarisJobRequest(
+        run_id="run_demo",
+        job_name="demo-job",
+        project="demo",
+        queue="debug",
+        walltime="00:10:00",
+        select_expr="1:ncpus=1",
+        entrypoint_path="/tmp/entrypoint.sh",
+        remote_root="/eagle/lc-mpi/Zhiqing/auto-research",
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+    with pytest.raises(ValueError, match=expected):
+        render_pbs_script(request)
+
+
 def test_render_pbs_script_shell_quotes_entrypoint_path() -> None:
     request = PolarisJobRequest(
         run_id="run_demo",

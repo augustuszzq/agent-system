@@ -155,6 +155,14 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
         _require_non_empty(request.job_name, "job_name"),
         "job_name",
     )
+    stdout_path = _require_no_whitespace(
+        _require_non_empty(request.stdout_path, "stdout_path"),
+        "stdout_path",
+    )
+    stderr_path = _require_no_whitespace(
+        _require_non_empty(request.stderr_path, "stderr_path"),
+        "stderr_path",
+    )
     remote_root = _require_no_whitespace(
         _require_non_empty(request.remote_root, "remote_root"),
         "remote_root",
@@ -171,8 +179,8 @@ def render_pbs_script(request: PolarisJobRequest) -> RenderedPBSScript:
 #PBS -l filesystems={request.filesystems}
 #PBS -N {job_name}
 #PBS -k doe
-#PBS -o {request.stdout_path}
-#PBS -e {request.stderr_path}
+#PBS -o {stdout_path}
+#PBS -e {stderr_path}
 
 set -euo pipefail
 
