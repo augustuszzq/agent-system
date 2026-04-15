@@ -906,7 +906,7 @@ Run:
 .venv/bin/pytest tests/test_cli.py tests/test_registry.py tests/test_executor.py tests/test_pbs_parser.py -v
 ```
 
-Expected: PASS for CLI plus executor/regsitry integration.
+Expected: PASS for CLI plus executor/registry integration.
 
 - [ ] **Step 5: Commit the CLI changes**
 
