@@ -193,10 +193,7 @@ def _probe_state_from_pbs_state(pbs_state: str) -> str:
         "R": "RUNNING",
         "F": "SUCCEEDED",
     }
-    try:
-        return state_map[normalized]
-    except KeyError as exc:
-        raise RemoteBridgeError(f"unsupported PBS state: {pbs_state}") from exc
+    return state_map.get(normalized, pbs_state)
 
 
 def submit_probe_job(
@@ -245,15 +242,33 @@ def submit_probe_job(
     temp_script = _write_temporary_script(rendered.script_text, run_record.run_id)
     try:
         submit_parent_dir = str(Path(request.submit_script_path).parent)
-        execute_remote_command(service, f"mkdir -p {shlex.quote(submit_parent_dir)}")
-        copy_to_remote(service, temp_script, request.submit_script_path, settings.remote_root)
+        mkdir_result = execute_remote_command(
+            service,
+            f"mkdir -p {shlex.quote(submit_parent_dir)}",
+        )
+        if mkdir_result.returncode != 0:
+            raise RemoteBridgeError(
+                mkdir_result.stderr.strip()
+                or f"failed to create submit directory: {submit_parent_dir}"
+            )
+
+        copy_result = copy_to_remote(service, temp_script, request.submit_script_path, settings.remote_root)
+        if copy_result.returncode != 0:
+            raise RemoteBridgeError(
+                copy_result.stderr.strip()
+                or f"failed to upload submit script: {request.submit_script_path}"
+            )
+
         qsub_command = shlex.join(build_qsub_command(request.submit_script_path))
         qsub_result = execute_remote_command(service, qsub_command)
         if qsub_result.returncode != 0:
             raise RemoteBridgeError(
                 qsub_result.stderr.strip() or f"qsub failed with exit code {qsub_result.returncode}"
             )
-        qsub_parse = parse_qsub_output(qsub_result.stdout)
+        try:
+            qsub_parse = parse_qsub_output(qsub_result.stdout)
+        except ValueError as exc:
+            raise RemoteBridgeError(str(exc)) from exc
         registry.mark_job_submitted(job_record.job_id, qsub_parse.pbs_job_id)
         return run_record.run_id, job_record.job_id, qsub_parse.pbs_job_id
     finally:

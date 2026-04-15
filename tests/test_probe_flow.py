@@ -4,6 +4,7 @@ import json
 import pytest
 
 from autoresearch import cli as cli_module
+from autoresearch.bridge.remote_exec import RemoteBridgeError
 from autoresearch.executor.pbs import build_qstat_command, build_qsub_command
 from autoresearch.executor.polaris import build_probe_job_request
 from autoresearch.db import init_db
@@ -47,9 +48,18 @@ def _settings(tmp_path: Path) -> object:
 
 
 class ProbeBridgeService:
-    def __init__(self, *, qsub_output: str, qstat_state: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        qsub_output: str,
+        qstat_state: str | None = None,
+        mkdir_returncode: int = 0,
+        copy_to_returncode: int = 0,
+    ) -> None:
         self.qsub_output = qsub_output
         self.qstat_state = qstat_state
+        self.mkdir_returncode = mkdir_returncode
+        self.copy_to_returncode = copy_to_returncode
         self.exec_calls: list[str] = []
         self.copy_to_calls: list[tuple[str, str]] = []
         self.timeline: list[tuple[str, str]] = []
@@ -67,9 +77,9 @@ class ProbeBridgeService:
         if command.startswith("mkdir -p "):
             return CommandResult(
                 args=("ssh", "polaris-relay", command),
-                returncode=0,
+                returncode=self.mkdir_returncode,
                 stdout="",
-                stderr="",
+                stderr="mkdir failed" if self.mkdir_returncode else "",
                 duration_seconds=0.01,
             )
         if command.startswith("qsub "):
@@ -106,9 +116,9 @@ class ProbeBridgeService:
         self.copy_to_calls.append((local_path, remote_path))
         return CommandResult(
             args=("scp", local_path, remote_path),
-            returncode=0,
+            returncode=self.copy_to_returncode,
             stdout="",
-            stderr="",
+            stderr="scp failed" if self.copy_to_returncode else "",
             duration_seconds=0.01,
         )
 
@@ -247,12 +257,87 @@ def test_submit_probe_job_creates_submit_directory_before_upload(
     assert service.timeline[2][1] == f"qsub {REMOTE_ROOT}/jobs/{run_id}/submit.pbs"
 
 
+def test_submit_probe_job_raises_on_submit_directory_mkdir_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+        mkdir_returncode=23,
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+
+    with pytest.raises(RemoteBridgeError, match="mkdir failed"):
+        cli_module.submit_probe_job(
+            project="CUSTOM_PROJECT",
+            queue="prod",
+            walltime="00:20:00",
+        )
+
+    assert len(service.exec_calls) == 1
+    assert service.exec_calls[0].startswith("mkdir -p /eagle/demo/jobs/run_")
+
+
+def test_submit_probe_job_raises_on_submit_script_upload_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+        copy_to_returncode=7,
+    )
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+
+    with pytest.raises(RemoteBridgeError, match="scp failed"):
+        cli_module.submit_probe_job(
+            project="CUSTOM_PROJECT",
+            queue="prod",
+            walltime="00:20:00",
+        )
+
+    assert len(service.exec_calls) == 1
+    assert service.exec_calls[0].startswith("mkdir -p /eagle/demo/jobs/run_")
+    assert len(service.copy_to_calls) == 1
+    assert service.copy_to_calls[0][1].startswith(f"{REMOTE_ROOT}/jobs/run_")
+
+
+def test_submit_probe_job_raises_on_malformed_qsub_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(qsub_output="job submitted")
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: service)
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+
+    with pytest.raises(RemoteBridgeError, match="malformed qsub output"):
+        cli_module.submit_probe_job(
+            project="CUSTOM_PROJECT",
+            queue="prod",
+            walltime="00:20:00",
+        )
+
+
 @pytest.mark.parametrize(
     ("pbs_state", "expected_state"),
     [
         ("Q", "QUEUED"),
         ("R", "RUNNING"),
         ("F", "SUCCEEDED"),
+        ("X", "X"),
     ],
 )
 def test_poll_probe_job_returns_state_and_updates_registry(
