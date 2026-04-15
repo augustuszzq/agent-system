@@ -134,3 +134,18 @@ def test_build_bootstrap_files_returns_managed_paths_and_contents() -> None:
     }
     assert files[f"{REMOTE_ROOT}/README.remote.md"].startswith("# Auto Research Remote Root")
     assert files[f"{REMOTE_ROOT}/jobs/probe/entrypoint.sh"].startswith("#!/bin/bash")
+
+
+@pytest.mark.parametrize(
+    "remote_root",
+    [
+        "/safe;touch/tmp/pwned",
+        "/safe$(cmd)",
+    ],
+)
+def test_bootstrap_helpers_reject_shell_metacharacters_in_remote_root(remote_root: str) -> None:
+    with pytest.raises(RemoteBridgeError, match="remote_root contains unsafe characters"):
+        build_bootstrap_mkdir_command(remote_root)
+
+    with pytest.raises(RemoteBridgeError, match="remote_root contains unsafe characters"):
+        build_bootstrap_files(remote_root)

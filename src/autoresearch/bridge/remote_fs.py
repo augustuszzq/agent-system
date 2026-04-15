@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from textwrap import dedent
 
 from autoresearch.bridge.remote_exec import RemoteBridgeError
@@ -31,6 +32,9 @@ _PROBE_ENTRYPOINT = dedent(
 ).strip() + "\n"
 
 
+_SAFE_REMOTE_ROOT_RE = re.compile(r"^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
+
+
 def _normalize_remote_root(remote_root: str) -> str:
     normalized = remote_root.strip()
     if not normalized:
@@ -39,7 +43,10 @@ def _normalize_remote_root(remote_root: str) -> str:
         raise RemoteBridgeError("remote_root must not contain whitespace")
     if not normalized.startswith("/"):
         raise RemoteBridgeError("remote_root must be absolute")
-    return normalized.rstrip("/") or "/"
+    normalized = normalized.rstrip("/") or "/"
+    if not _SAFE_REMOTE_ROOT_RE.fullmatch(normalized):
+        raise RemoteBridgeError("remote_root contains unsafe characters")
+    return normalized
 
 
 def build_bootstrap_mkdir_command(remote_root: str) -> str:
