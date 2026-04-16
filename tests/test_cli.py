@@ -6,6 +6,7 @@ from autoresearch import cli as cli_module
 from autoresearch.bridge.remote_exec import RemoteBridgeError
 from autoresearch.cli import app
 from autoresearch.db import connect_db, init_db
+from autoresearch.incidents.fetch import IncidentFetchError
 from autoresearch.incidents.registry import IncidentRegistry
 from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
 from autoresearch.runs.registry import RunRegistry
@@ -506,6 +507,116 @@ def test_incident_scan_reports_created_incident_with_monkeypatched_fetch(tmp_pat
         "matched_lines": ["cannot open"],
         "classifier_rule": "env_path_error",
     }
+
+
+def test_incident_scan_reports_no_incident_when_classifier_returns_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    run_registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    run_record = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    job_record = run_registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+
+    fake_bridge = FakeBridgeService()
+    fake_snapshot_dir = tmp_path / "state" / "incidents" / job_record.job_id / "2026-04-16T12:00:00"
+    fake_snapshot_dir.mkdir(parents=True)
+    fake_snapshot = IncidentSnapshotRef(
+        scan_time="2026-04-16T12:00:00",
+        snapshot_dir=fake_snapshot_dir,
+        qstat_json_path=fake_snapshot_dir / "qstat.json",
+        stdout_tail_path=fake_snapshot_dir / "stdout.tail.log",
+        stderr_tail_path=fake_snapshot_dir / "stderr.tail.log",
+    )
+    fake_fetched = IncidentFetchResult(source="live", snapshot=fake_snapshot, previous_snapshot=None)
+    fake_normalized = NormalizedIncidentInput(
+        job_id=job_record.job_id,
+        run_id=job_record.run_id,
+        pbs_job_id=job_record.pbs_job_id,
+        job_state="F",
+        comment="all good",
+        exec_host="node01",
+        stdout_tail="stdout tail",
+        stderr_tail="stderr tail",
+        snapshot_dir=fake_snapshot.snapshot_dir,
+        scan_time=fake_snapshot.scan_time,
+        current_log_tail_hash="abc123",
+        previous_log_tail_hash=None,
+    )
+
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_bridge)
+    monkeypatch.setattr(cli_module, "collect_incident_evidence", lambda paths, job, bridge: fake_fetched)
+    monkeypatch.setattr(cli_module, "normalize_incident_evidence", lambda **kwargs: fake_normalized)
+    monkeypatch.setattr(cli_module, "classify_incident", lambda incident: None)
+
+    result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
+
+    assert result.exit_code == 0
+    assert "No incident detected for job" in result.stdout
+    assert IncidentRegistry(tmp_path / "state" / "autoresearch.db").list_open_incidents() == []
+
+
+def test_incident_scan_reports_fetch_errors_to_stderr(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    run_registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    run_record = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    job_record = run_registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+
+    fake_bridge = FakeBridgeService()
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_bridge)
+    monkeypatch.setattr(
+        cli_module,
+        "collect_incident_evidence",
+        lambda paths, job, bridge: (_ for _ in ()).throw(IncidentFetchError("fetch failed")),
+    )
+
+    result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
+
+    assert result.exit_code == 1
+    assert "fetch failed" in result.stderr
+
+
+def test_incident_scan_reports_unknown_job_as_cli_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    monkeypatch.setattr(cli_module.RunRegistry, "get_job", lambda self, job_id: (_ for _ in ()).throw(KeyError(f"job not found: {job_id}")))
+
+    result = runner.invoke(app, ["incident", "scan", "--job-id", "job_missing"])
+
+    assert result.exit_code == 1
+    assert "job not found: job_missing" in result.stderr
 
 
 def test_incident_scan_reports_updated_incident_when_matching_row_exists(tmp_path, monkeypatch) -> None:

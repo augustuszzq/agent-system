@@ -347,7 +347,11 @@ def scan_incident(
 ) -> None:
     settings = load_settings()
     registry = RunRegistry(settings.paths.db_path)
-    job_record = registry.get_job(job_id)
+    try:
+        job_record = registry.get_job(job_id)
+    except KeyError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
     bridge = build_bridge_service()
 
     try:
