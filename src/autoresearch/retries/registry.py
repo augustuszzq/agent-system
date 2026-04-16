@@ -178,33 +178,7 @@ class RetryRequestRegistry:
     def mark_failed(self, retry_request_id: str, *, error_text: str) -> RetryRequestRecord:
         with connect_db(self._db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            record = self._get_row_for_update(conn, retry_request_id)
-            self._require_pending_execution(record)
-            updated_at = self._now_iso()
-            conn.execute(
-                """
-                UPDATE retry_requests
-                SET execution_status = ?,
-                    last_error = ?,
-                    updated_at = ?
-                WHERE retry_request_id = ?
-                """,
-                ("FAILED", error_text, updated_at, retry_request_id),
-            )
-            row = conn.execute(
-                """
-                SELECT retry_request_id, incident_id, source_run_id,
-                       source_job_id, source_pbs_job_id, requested_action,
-                       approval_status, execution_status, attempt_count,
-                       approved_by, approval_reason, last_error, result_run_id,
-                       result_job_id, result_pbs_job_id, created_at, updated_at,
-                       executed_at
-                FROM retry_requests
-                WHERE retry_request_id = ?
-                """,
-                (retry_request_id,),
-            ).fetchone()
-        return self._row_to_record(row)
+            return self.mark_failed_in_connection(conn, retry_request_id, error_text=error_text)
 
     def mark_submitted(
         self,
@@ -217,45 +191,150 @@ class RetryRequestRegistry:
     ) -> RetryRequestRecord:
         with connect_db(self._db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            record = self._get_row_for_update(conn, retry_request_id)
-            self._require_pending_execution(record)
-            updated_at = self._now_iso()
+            return self.mark_submitted_in_connection(
+                conn,
+                retry_request_id,
+                result_run_id=result_run_id,
+                result_job_id=result_job_id,
+                result_pbs_job_id=result_pbs_job_id,
+                executed_at=executed_at,
+            )
+
+    def load_for_execution(
+        self, conn: sqlite3.Connection, retry_request_id: str
+    ) -> RetryRequestRecord:
+        row = self._get_row_for_update(conn, retry_request_id)
+        return self._row_to_record(row)
+
+    def claim_execution(
+        self, conn: sqlite3.Connection, retry_request_id: str
+    ) -> RetryRequestRecord:
+        record = self._get_row_for_update(conn, retry_request_id)
+        self._require_pending_execution(record)
+        updated_at = self._now_iso()
+        conn.execute(
+            """
+            UPDATE retry_requests
+            SET execution_status = ?,
+                updated_at = ?
+            WHERE retry_request_id = ?
+            """,
+            ("SUBMITTED", updated_at, retry_request_id),
+        )
+        row = conn.execute(
+            """
+            SELECT retry_request_id, incident_id, source_run_id,
+                   source_job_id, source_pbs_job_id, requested_action,
+                   approval_status, execution_status, attempt_count,
+                   approved_by, approval_reason, last_error, result_run_id,
+                   result_job_id, result_pbs_job_id, created_at, updated_at,
+                   executed_at
+            FROM retry_requests
+            WHERE retry_request_id = ?
+            """,
+            (retry_request_id,),
+        ).fetchone()
+        return self._row_to_record(row)
+
+    def mark_failed_in_connection(
+        self, conn: sqlite3.Connection, retry_request_id: str, *, error_text: str
+    ) -> RetryRequestRecord:
+        record = self._get_row_for_update(conn, retry_request_id)
+        if record["approval_status"] != "APPROVED" or record["execution_status"] not in {
+            "NOT_STARTED",
+            "SUBMITTED",
+        }:
+            raise ValueError("retry request must be approved and not started")
+        updated_at = self._now_iso()
+        conn.execute(
+            """
+            UPDATE retry_requests
+            SET execution_status = ?,
+                last_error = ?,
+                updated_at = ?
+            WHERE retry_request_id = ?
+            """,
+            ("FAILED", error_text, updated_at, retry_request_id),
+        )
+        row = conn.execute(
+            """
+            SELECT retry_request_id, incident_id, source_run_id,
+                   source_job_id, source_pbs_job_id, requested_action,
+                   approval_status, execution_status, attempt_count,
+                   approved_by, approval_reason, last_error, result_run_id,
+                   result_job_id, result_pbs_job_id, created_at, updated_at,
+                   executed_at
+            FROM retry_requests
+            WHERE retry_request_id = ?
+            """,
+            (retry_request_id,),
+        ).fetchone()
+        return self._row_to_record(row)
+
+    def mark_submitted_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        retry_request_id: str,
+        *,
+        result_run_id: str,
+        result_job_id: str,
+        result_pbs_job_id: str,
+        executed_at: str,
+    ) -> RetryRequestRecord:
+        record = self._get_row_for_update(conn, retry_request_id)
+        if record["approval_status"] != "APPROVED" or record["execution_status"] not in {
+            "NOT_STARTED",
+            "SUBMITTED",
+        }:
+            raise ValueError("retry request must be approved and not started")
+        if record["execution_status"] == "NOT_STARTED":
             conn.execute(
                 """
                 UPDATE retry_requests
                 SET execution_status = ?,
-                    attempt_count = ?,
-                    result_run_id = ?,
-                    result_job_id = ?,
-                    result_pbs_job_id = ?,
-                    executed_at = ?,
                     updated_at = ?
                 WHERE retry_request_id = ?
                 """,
-                (
-                    "SUBMITTED",
-                    record["attempt_count"] + 1,
-                    result_run_id,
-                    result_job_id,
-                    result_pbs_job_id,
-                    executed_at,
-                    updated_at,
-                    retry_request_id,
-                ),
+                ("SUBMITTED", self._now_iso(), retry_request_id),
             )
-            row = conn.execute(
-                """
-                SELECT retry_request_id, incident_id, source_run_id,
-                       source_job_id, source_pbs_job_id, requested_action,
-                       approval_status, execution_status, attempt_count,
-                       approved_by, approval_reason, last_error, result_run_id,
-                       result_job_id, result_pbs_job_id, created_at, updated_at,
-                       executed_at
-                FROM retry_requests
-                WHERE retry_request_id = ?
-                """,
-                (retry_request_id,),
-            ).fetchone()
+            record = self._get_row_for_update(conn, retry_request_id)
+        if record["execution_status"] != "SUBMITTED":
+            raise ValueError("retry request must be claimed before submission is finalized")
+        updated_at = self._now_iso()
+        conn.execute(
+            """
+            UPDATE retry_requests
+            SET attempt_count = ?,
+                result_run_id = ?,
+                result_job_id = ?,
+                result_pbs_job_id = ?,
+                executed_at = ?,
+                updated_at = ?
+            WHERE retry_request_id = ?
+            """,
+            (
+                record["attempt_count"] + 1,
+                result_run_id,
+                result_job_id,
+                result_pbs_job_id,
+                executed_at,
+                updated_at,
+                retry_request_id,
+            ),
+        )
+        row = conn.execute(
+            """
+            SELECT retry_request_id, incident_id, source_run_id,
+                   source_job_id, source_pbs_job_id, requested_action,
+                   approval_status, execution_status, attempt_count,
+                   approved_by, approval_reason, last_error, result_run_id,
+                   result_job_id, result_pbs_job_id, created_at, updated_at,
+                   executed_at
+            FROM retry_requests
+            WHERE retry_request_id = ?
+            """,
+            (retry_request_id,),
+        ).fetchone()
         return self._row_to_record(row)
 
     def _update_decision(

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import sqlite3
 import uuid
 
 from autoresearch.db import connect_db
@@ -29,6 +30,7 @@ class DecisionLog:
         decision: str,
         rationale: str | None,
         actor: str,
+        conn: sqlite3.Connection | None = None,
     ) -> DecisionRecord:
         record = DecisionRecord(
             decision_id=f"decision_{uuid.uuid4().hex[:12]}",
@@ -39,7 +41,26 @@ class DecisionLog:
             rationale=rationale,
             actor=actor,
         )
-        with connect_db(self._db_path) as conn:
+        if conn is None:
+            with connect_db(self._db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        decision_id, created_at, target_type, target_id,
+                        decision, rationale, actor
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.decision_id,
+                        record.created_at,
+                        record.target_type,
+                        record.target_id,
+                        record.decision,
+                        record.rationale,
+                        record.actor,
+                    ),
+                )
+        else:
             conn.execute(
                 """
                 INSERT INTO decisions (
