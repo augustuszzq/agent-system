@@ -270,6 +270,10 @@ def test_execute_retry_propagates_unexpected_submitter_errors(tmp_path: Path) ->
     with pytest.raises(RuntimeError, match="bug"):
         executor.execute(request.retry_request_id)
 
+    updated = RetryRequestRegistry(db_path).get(request.retry_request_id)
+    assert updated.execution_status == "FAILED"
+    assert updated.last_error == "bug"
+
 
 def test_execute_retry_rejects_mismatched_source_linkage_before_submit(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"

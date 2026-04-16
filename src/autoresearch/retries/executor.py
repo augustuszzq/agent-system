@@ -21,6 +21,8 @@ class RetryExecutor:
         self._decision_log = DecisionLog(db_path)
 
     def execute(self, retry_request_id: str) -> RetryRequestRecord:
+        unexpected_exc: Exception | None = None
+        unexpected_tb = None
         with connect_db(self._db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             request = self._retry_registry.load_for_execution(conn, retry_request_id)
@@ -61,24 +63,36 @@ class RetryExecutor:
                     retry_request_id,
                     error_text=str(exc),
                 )
+            except Exception as exc:
+                self._retry_registry.mark_failed_in_connection(
+                    conn,
+                    retry_request_id,
+                    error_text=str(exc),
+                )
+                unexpected_exc = exc
+                unexpected_tb = exc.__traceback__
+                submitted = None
 
-            updated = self._retry_registry.mark_submitted_in_connection(
-                conn,
-                retry_request_id,
-                result_run_id=submitted.run_id,
-                result_job_id=submitted.job_id,
-                result_pbs_job_id=submitted.pbs_job_id,
-                executed_at=datetime.now(UTC).isoformat(),
-            )
-            self._decision_log.append(
-                target_type="retry_request",
-                target_id=retry_request_id,
-                decision="execute-approved-retry",
-                rationale=f"submitted {submitted.job_id}",
-                actor=self._actor,
-                conn=conn,
-            )
-            return updated
+            if submitted is not None:
+                updated = self._retry_registry.mark_submitted_in_connection(
+                    conn,
+                    retry_request_id,
+                    result_run_id=submitted.run_id,
+                    result_job_id=submitted.job_id,
+                    result_pbs_job_id=submitted.pbs_job_id,
+                    executed_at=datetime.now(UTC).isoformat(),
+                )
+                self._decision_log.append(
+                    target_type="retry_request",
+                    target_id=retry_request_id,
+                    decision="execute-approved-retry",
+                    rationale=f"submitted {submitted.job_id}",
+                    actor=self._actor,
+                    conn=conn,
+                )
+                return updated
+        if unexpected_exc is not None:
+            raise unexpected_exc.with_traceback(unexpected_tb)
 
     @staticmethod
     def _validate_retry_context(
