@@ -301,6 +301,42 @@ def test_submit_live_probe_run_preserves_project_override_in_request(
     assert captured["project"] == "CUSTOM_PROJECT"
 
 
+def test_submit_live_probe_run_uses_exit_code_when_qsub_stderr_is_empty(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+
+    class QsubFailureProbeBridgeService(ProbeBridgeService):
+        def exec(self, command: str) -> CommandResult:
+            if command.startswith("qsub "):
+                self.timeline.append(("exec", command))
+                self.exec_calls.append(command)
+                return CommandResult(
+                    args=("ssh", "polaris-relay", command),
+                    returncode=17,
+                    stdout="",
+                    stderr="",
+                    duration_seconds=0.01,
+                )
+            return super().exec(command)
+
+    service = QsubFailureProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+
+    with pytest.raises(RemoteBridgeError, match="qsub failed with exit code 17"):
+        submit_live_probe_run(
+            settings=settings,
+            service=service,
+            run_kind="probe",
+            notes=None,
+            project="ALCF_PROJECT",
+            queue="debug",
+            walltime="00:10:00",
+        )
+
+
 def test_job_submit_probe_reuses_shared_submit_helper(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

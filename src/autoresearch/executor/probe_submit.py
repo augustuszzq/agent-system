@@ -77,22 +77,38 @@ def submit_live_probe_run(
         )
         if mkdir_submit.returncode != 0:
             raise RemoteBridgeError(
-                mkdir_submit.stderr.strip() or "failed to create submit directory"
+                mkdir_submit.stderr.strip()
+                or f"failed to create submit directory: {Path(request.submit_script_path).parent}"
             )
-        copy_result = copy_to_remote(service, temp_path, request.submit_script_path, settings.remote_root)
+        copy_result = copy_to_remote(
+            service,
+            temp_path,
+            request.submit_script_path,
+            settings.remote_root,
+        )
         if copy_result.returncode != 0:
-            raise RemoteBridgeError(copy_result.stderr.strip() or "failed to upload submit script")
+            raise RemoteBridgeError(
+                copy_result.stderr.strip()
+                or f"failed to upload submit script: {request.submit_script_path}"
+            )
         mkdir_logs = execute_remote_command(
             service,
             f"mkdir -p {shlex.quote(str(Path(request.stdout_path).parent))}",
         )
         if mkdir_logs.returncode != 0:
             raise RemoteBridgeError(
-                mkdir_logs.stderr.strip() or "failed to create run log directory"
+                mkdir_logs.stderr.strip()
+                or f"failed to create run log directory: {Path(request.stdout_path).parent}"
             )
-        qsub_result = execute_remote_command(service, shlex.join(build_qsub_command(request.submit_script_path)))
+        qsub_result = execute_remote_command(
+            service,
+            shlex.join(build_qsub_command(request.submit_script_path)),
+        )
         if qsub_result.returncode != 0:
-            raise RemoteBridgeError(qsub_result.stderr.strip() or "qsub failed")
+            raise RemoteBridgeError(
+                qsub_result.stderr.strip()
+                or f"qsub failed with exit code {qsub_result.returncode}"
+            )
         try:
             parsed = parse_qsub_output(qsub_result.stdout)
         except ValueError as exc:

@@ -1,6 +1,5 @@
 from pathlib import Path
 import shlex
-import tempfile
 from typing import Annotated, Optional
 
 import typer
@@ -21,9 +20,7 @@ from autoresearch.incidents.registry import IncidentRegistry
 from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
 from autoresearch.executor.pbs import (
     build_qstat_command,
-    build_qsub_command,
     parse_qstat_json,
-    parse_qsub_output,
     render_pbs_script,
 )
 from autoresearch.executor.polaris import build_polaris_job_request
@@ -177,21 +174,6 @@ def _resolve_probe_settings(
         queue=settings.probe.queue if queue is None else queue,
         walltime=settings.probe.walltime if walltime is None else walltime,
     )
-
-
-def _write_temporary_script(script_text: str, run_id: str) -> Path:
-    temp_file = tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        suffix=f"-{run_id}.pbs",
-        delete=False,
-    )
-    try:
-        temp_file.write(script_text)
-        temp_file.flush()
-        return Path(temp_file.name)
-    finally:
-        temp_file.close()
 
 
 def _probe_state_from_pbs_state(pbs_state: str, exit_status: int | None = None) -> str:
