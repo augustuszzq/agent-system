@@ -110,6 +110,8 @@ def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident
         if killed_index is None:
             return None
         nearby_context = _lines_within_radius(lines, killed_index, radius=1)
+        if _contains_any(" ".join(nearby_context), _WALLTIME_PATTERNS):
+            return None
         if not _contains_any(" ".join(nearby_context), _OOM_PATTERNS[:-1] + _OOM_CONTEXT_PATTERNS):
             return None
         line = lines[killed_index]
@@ -207,6 +209,8 @@ def _is_mpi_bootstrap_line(line: str) -> bool:
         return True
     if "mpi_init" in line:
         return _contains_any(line, ("failed", "fatal", "abort", "not found"))
+    if "launcher" in line:
+        return _contains_any(line, ("failed", "fatal", "abort", "error", "not found"))
     if "bootstrap" not in line:
         return False
     return _contains_any(line, ("failed", "fatal", "not found", "abort"))
@@ -219,9 +223,13 @@ def _is_nccl_failure_line(line: str) -> bool:
         return True
     if _contains_any(line, ("failed", "fatal", "abort", "error in")):
         return True
+    if "watchdog" in line and "timeout" in line:
+        return True
+    if "collective operation timeout" in line:
+        return True
     return "warn" in line and _contains_any(
         line,
-        ("connection closed by remote peer", "connection closed", "remote peer"),
+        ("connection closed by remote peer",),
     )
 
 

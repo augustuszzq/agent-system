@@ -86,6 +86,18 @@ def test_classify_walltime_from_stdout_tail() -> None:
     assert result.severity == "HIGH"
 
 
+def test_classify_walltime_with_nearby_memory_text_does_not_fall_back_to_oom() -> None:
+    result = classify_incident(
+        _normalized(
+            stdout_tail="memory pressure rising\nPBS: job killed: walltime 00:10:00 exceeded limit\n"
+        )
+    )
+
+    assert result is not None
+    assert result.category == "RESOURCE_WALLTIME"
+    assert result.severity == "HIGH"
+
+
 def test_classify_import_error_from_stderr_tail() -> None:
     result = classify_incident(
         _normalized(stderr_tail=_fixture_text("stderr_import_error.log"))
@@ -129,6 +141,16 @@ def test_classify_mpi_bootstrap_is_critical() -> None:
 def test_classify_nccl_failure_from_stdout_tail() -> None:
     result = classify_incident(
         _normalized(stdout_tail="NCCL WARN connection closed by remote peer\n")
+    )
+
+    assert result is not None
+    assert result.category == "NCCL_FAILURE"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_nccl_watchdog_timeout_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="NCCL WARN Watchdog caught collective operation timeout after 600000 ms\n")
     )
 
     assert result is not None
@@ -260,6 +282,16 @@ def test_classify_path_error_matches_cant_open_file_from_stdout_tail() -> None:
 def test_classify_mpi_bootstrap_from_stdout_tail() -> None:
     result = classify_incident(
         _normalized(stdout_tail="MPI_Init failed during bootstrap\nPMI server not found\n")
+    )
+
+    assert result is not None
+    assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_mpi_launcher_failure_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="launcher failed to start rank 0\n")
     )
 
     assert result is not None
