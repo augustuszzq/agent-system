@@ -26,6 +26,22 @@ def _strip_host_prefix(path_value: str | None) -> str | None:
     return path_part
 
 
+def _parse_exit_status(raw_value: object) -> int | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, str):
+        stripped = raw_value.strip()
+        if not stripped:
+            raise ValueError("malformed qstat json")
+        try:
+            return int(stripped)
+        except ValueError as exc:
+            raise ValueError("malformed qstat json") from exc
+    raise ValueError("malformed qstat json")
+
+
 def _looks_like_pbs_job_id(job_id: str) -> bool:
     return bool(re.fullmatch(r"\d+(?:\.[A-Za-z0-9][A-Za-z0-9._-]*)+", job_id))
 
@@ -72,10 +88,18 @@ def parse_qstat_output(text: str) -> QstatParseResult:
     job_state = values.get("job_state")
     if job_state is None or not job_state:
         raise ValueError("missing job_state in qstat output")
+    exit_status_raw = values.get("Exit_status")
+    exit_status: int | None = None
+    if exit_status_raw is not None:
+        try:
+            exit_status = int(exit_status_raw)
+        except ValueError as exc:
+            raise ValueError("malformed qstat output") from exc
 
     return QstatParseResult(
         pbs_job_id=job_id,
         state=job_state,
+        exit_status=exit_status,
         queue=values.get("queue"),
         comment=values.get("comment"),
         exec_host=values.get("exec_host"),
@@ -110,6 +134,7 @@ def parse_qstat_json(text: str) -> QstatParseResult:
     queue = job_data.get("queue")
     comment = job_data.get("comment")
     exec_host = job_data.get("exec_host")
+    exit_status = _parse_exit_status(job_data.get("Exit_status"))
     output_path = job_data.get("Output_Path")
     error_path = job_data.get("Error_Path")
 
@@ -126,6 +151,7 @@ def parse_qstat_json(text: str) -> QstatParseResult:
     return QstatParseResult(
         pbs_job_id=job_id,
         state=job_state,
+        exit_status=exit_status,
         queue=queue,
         comment=comment,
         exec_host=exec_host,

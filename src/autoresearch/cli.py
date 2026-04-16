@@ -1,5 +1,6 @@
 from pathlib import Path
 import shlex
+import tempfile
 from typing import Annotated, Optional
 
 import typer
@@ -10,14 +11,20 @@ from autoresearch.bridge.remote_exec import (
     copy_to_remote,
     execute_remote_command,
 )
-from autoresearch.bridge.remote_fs import build_bootstrap_mkdir_command
+from autoresearch.bridge.remote_fs import bootstrap_remote_root
 from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import init_db
-from autoresearch.executor.pbs import render_pbs_script
-from autoresearch.executor.polaris import build_polaris_job_request
+from autoresearch.executor.pbs import (
+    build_qstat_command,
+    build_qsub_command,
+    parse_qstat_json,
+    parse_qsub_output,
+    render_pbs_script,
+)
+from autoresearch.executor.polaris import build_polaris_job_request, build_probe_job_request
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import CommandResult, RunCreateRequest
-from autoresearch.settings import load_settings
+from autoresearch.settings import ProbeSettings, load_settings
 
 
 app = typer.Typer(help="Auto Research control plane CLI.")
@@ -98,6 +105,34 @@ def render_job_pbs(
     typer.echo(rendered.script_text, nl=False)
 
 
+@job_app.command("submit-probe")
+def submit_probe(
+    project: Optional[str] = typer.Option(None, "--project"),
+    queue: Optional[str] = typer.Option(None, "--queue"),
+    walltime: Optional[str] = typer.Option(None, "--walltime"),
+) -> None:
+    try:
+        run_id, job_id, pbs_job_id = submit_probe_job(
+            project=project,
+            queue=queue,
+            walltime=walltime,
+        )
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    typer.echo(f"{run_id}\t{job_id}\t{pbs_job_id}")
+
+
+@job_app.command("poll")
+def poll_probe(
+    job_id: str = typer.Option(..., "--job-id"),
+) -> None:
+    try:
+        state, pbs_job_id = poll_probe_job(job_id)
+    except RemoteBridgeError as error:
+        _fail_remote_bridge_error(error)
+    typer.echo(f"{job_id}\t{pbs_job_id}\t{state}")
+
+
 def build_bridge_service() -> SSHMasterClient:
     settings = load_settings()
     return SSHMasterClient(settings=settings.bridge)
@@ -122,22 +157,181 @@ def _fail_remote_bridge_error(error: RemoteBridgeError) -> None:
     raise typer.Exit(code=1)
 
 
+def _resolve_probe_settings(
+    settings,
+    *,
+    project: str | None,
+    queue: str | None,
+    walltime: str | None,
+) -> ProbeSettings:
+    return ProbeSettings(
+        project=settings.probe.project if project is None else project,
+        queue=settings.probe.queue if queue is None else queue,
+        walltime=settings.probe.walltime if walltime is None else walltime,
+    )
+
+
+def _write_temporary_script(script_text: str, run_id: str) -> Path:
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=f"-{run_id}.pbs",
+        delete=False,
+    )
+    try:
+        temp_file.write(script_text)
+        temp_file.flush()
+        return Path(temp_file.name)
+    finally:
+        temp_file.close()
+
+
+def _probe_state_from_pbs_state(pbs_state: str, exit_status: int | None = None) -> str:
+    normalized = pbs_state.strip().upper()
+    state_map = {
+        "Q": "QUEUED",
+        "R": "RUNNING",
+    }
+    if normalized == "F":
+        if exit_status is None:
+            return pbs_state
+        if exit_status != 0:
+            return "FAILED"
+        return "SUCCEEDED"
+    return state_map.get(normalized, pbs_state)
+
+
+def submit_probe_job(
+    project: str | None = None,
+    queue: str | None = None,
+    walltime: str | None = None,
+) -> tuple[str, str, str]:
+    settings = load_settings()
+    service = build_bridge_service()
+    bootstrap_remote_root(service, settings.remote_root, force=False)
+
+    probe_settings = _resolve_probe_settings(
+        settings,
+        project=project,
+        queue=queue,
+        walltime=walltime,
+    )
+    registry = RunRegistry(settings.paths.db_path)
+    run_record = registry.create_run(
+        RunCreateRequest(run_kind="probe", project=probe_settings.project)
+    )
+
+    request = build_probe_job_request(
+        run_id=run_record.run_id,
+        entrypoint_path=f"{settings.remote_root}/jobs/probe/entrypoint.sh",
+        remote_root=settings.remote_root,
+        probe_settings=probe_settings,
+        queue=queue,
+        walltime=walltime,
+    )
+    rendered = render_pbs_script(request)
+    job_record = registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue=request.queue,
+        walltime=request.walltime,
+        filesystems=request.filesystems,
+        select_expr=request.select_expr,
+        place_expr=request.place_expr,
+        submit_script_path=request.submit_script_path,
+        stdout_path=request.stdout_path,
+        stderr_path=request.stderr_path,
+    )
+    registry.get_job(job_record.job_id)
+
+    temp_script = _write_temporary_script(rendered.script_text, run_record.run_id)
+    try:
+        submit_parent_dir = str(Path(request.submit_script_path).parent)
+        mkdir_result = execute_remote_command(
+            service,
+            f"mkdir -p {shlex.quote(submit_parent_dir)}",
+        )
+        if mkdir_result.returncode != 0:
+            raise RemoteBridgeError(
+                mkdir_result.stderr.strip()
+                or f"failed to create submit directory: {submit_parent_dir}"
+            )
+
+        copy_result = copy_to_remote(service, temp_script, request.submit_script_path, settings.remote_root)
+        if copy_result.returncode != 0:
+            raise RemoteBridgeError(
+                copy_result.stderr.strip()
+                or f"failed to upload submit script: {request.submit_script_path}"
+            )
+
+        run_log_parent_dir = str(Path(request.stdout_path).parent)
+        mkdir_result = execute_remote_command(
+            service,
+            f"mkdir -p {shlex.quote(run_log_parent_dir)}",
+        )
+        if mkdir_result.returncode != 0:
+            raise RemoteBridgeError(
+                mkdir_result.stderr.strip()
+                or f"failed to create run log directory: {run_log_parent_dir}"
+            )
+
+        qsub_command = shlex.join(build_qsub_command(request.submit_script_path))
+        qsub_result = execute_remote_command(service, qsub_command)
+        if qsub_result.returncode != 0:
+            raise RemoteBridgeError(
+                qsub_result.stderr.strip() or f"qsub failed with exit code {qsub_result.returncode}"
+            )
+        try:
+            qsub_parse = parse_qsub_output(qsub_result.stdout)
+        except ValueError as exc:
+            raise RemoteBridgeError(str(exc)) from exc
+        registry.mark_job_submitted(job_record.job_id, qsub_parse.pbs_job_id)
+        return run_record.run_id, job_record.job_id, qsub_parse.pbs_job_id
+    finally:
+        temp_script.unlink(missing_ok=True)
+
+
+def poll_probe_job(job_id: str) -> tuple[str, str]:
+    settings = load_settings()
+    service = build_bridge_service()
+    registry = RunRegistry(settings.paths.db_path)
+    try:
+        job_record = registry.get_job(job_id)
+    except KeyError as exc:
+        raise RemoteBridgeError(str(exc)) from exc
+
+    if not job_record.pbs_job_id:
+        raise RemoteBridgeError(f"job {job_id} has not been submitted yet")
+
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id))
+    qstat_result = execute_remote_command(service, qstat_command)
+    if qstat_result.returncode != 0:
+        raise RemoteBridgeError(
+            qstat_result.stderr.strip() or f"qstat failed with exit code {qstat_result.returncode}"
+        )
+
+    try:
+        qstat_parse = parse_qstat_json(qstat_result.stdout)
+    except ValueError as exc:
+        raise RemoteBridgeError(str(exc)) from exc
+
+    state = _probe_state_from_pbs_state(qstat_parse.state, qstat_parse.exit_status)
+    registry.update_job_state(
+        job_id=job_record.job_id,
+        state=state,
+        pbs_job_id=job_record.pbs_job_id,
+        exec_host=qstat_parse.exec_host,
+    )
+    return state, job_record.pbs_job_id
+
+
 def run_remote_bootstrap(force: bool) -> None:
-    if force:
-        typer.echo("--force is not implemented until Task 7", err=True)
-        raise typer.Exit(code=1)
     try:
         settings = load_settings()
         service = build_bridge_service()
-        result = execute_remote_command(
-            service,
-            build_bootstrap_mkdir_command(settings.remote_root),
-        )
+        bootstrap_remote_root(service, settings.remote_root, force=force)
     except RemoteBridgeError as error:
         _fail_remote_bridge_error(error)
-    if result.returncode != 0:
-        _echo_failed_command(result)
-        raise typer.Exit(code=result.returncode)
 
 
 @bridge_app.command("attach")

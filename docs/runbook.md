@@ -13,27 +13,33 @@ Bridge settings live in `conf/polaris.yaml`. Phase 2 expects an SSH alias such a
 
 Phase 2 does not rewrite SSH config and does not automate MFA.
 
-## Bridge commands
+## Phase 3B remote probe workflow
 
-Use the bridge CLI from the repo root:
+Use the bridge and remote CLI from the repo root. These commands require an already attached bridge:
 
 ```bash
-python -m autoresearch.cli bridge attach
-python -m autoresearch.cli bridge check
-python -m autoresearch.cli bridge status
-python -m autoresearch.cli bridge detach
+python -m autoresearch.cli bridge exec -- "pwd"
+python -m autoresearch.cli bridge copy-to --src local.txt --dst <remote_root>/manifests/local.txt
+python -m autoresearch.cli bridge copy-from --src <remote_root>/runs/<run_id>/stdout.log --dst /tmp/probe.log
+python -m autoresearch.cli remote bootstrap
+python -m autoresearch.cli job submit-probe
+python -m autoresearch.cli job poll --job-id <job_id>
 ```
 
 Command behavior:
 
-1. `bridge attach`
-   Creates the OpenSSH control master with `ssh -MNf <alias>`. The first successful attach still requires manual MFA.
-2. `bridge check`
-   Returns success only when the bridge is `ATTACHED`. Any other state exits nonzero.
-3. `bridge status`
-   Prints the normalized bridge state plus a short explanation without changing anything.
-4. `bridge detach`
-   Closes the control master with `ssh -O exit <alias>`. If no master exists, the CLI reports `DETACHED` instead of pretending success.
+1. `bridge exec -- "pwd"`
+   Runs a single remote command through the attached bridge. This is the narrow remote exec path used by operators and by the probe workflow.
+2. `bridge copy-to --src local.txt --dst <remote_root>/manifests/local.txt`
+   Uploads a local file into the managed remote root.
+3. `bridge copy-from --src <remote_root>/runs/<run_id>/stdout.log --dst /tmp/probe.log`
+   Downloads a file from the managed remote root to the local machine.
+4. `remote bootstrap`
+   Creates the managed Eagle root layout and the built-in probe entrypoint if they are missing.
+5. `job submit-probe`
+   This is the first real remote submission path. It only submits the built-in probe job, and it uses real `qsub` against the managed remote root.
+6. `job poll --job-id <job_id>`
+   Queries the live PBS job with real `qstat -fF JSON` and updates the local job record with the current probe state.
 
 ## Local PBS executor commands
 
@@ -45,6 +51,8 @@ python -m autoresearch.cli job render-pbs --run-id run_demo --project demo --que
 ```
 
 `job list` prints the local registry view of draft rows and rows with scheduler metadata and state. `job render-pbs` prints the rendered PBS script only; it does not submit anything. Real submission remains a Phase 3B task.
+
+`job submit-probe` is the first live submission path in the system, and it is intentionally narrow: it only submits the built-in probe. Generalized job submission remains out of scope.
 
 ## Failure handling
 

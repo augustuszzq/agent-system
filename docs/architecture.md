@@ -6,6 +6,8 @@
 2. The narrow ALCF bridge from Phase 2
 3. The local PBS executor from Phase 3A
 
+Phase 3B adds a narrow remote probe loop on top of those layers. It is intentionally operational, not generalized.
+
 ## Local PBS executor
 
 Phase 3A adds a local PBS executor layer that models Polaris PBS behavior without live submission. It is used to build, render, and inspect job records locally so the control plane can validate PBS wiring before any real bridge-driven submission exists.
@@ -26,6 +28,43 @@ Current executor and registry modules:
 
 Phase 3A stays local-only. It does not call the ALCF bridge for real submission.
 
+## Phase 3B remote probe workflow
+
+Phase 3B connects the bridge to a single managed remote root on Eagle and exposes only the commands needed to bootstrap and exercise the built-in probe job.
+
+The workflow is:
+
+1. Use bridge-level `exec`, `copy-to`, and `copy-from` to operate on the managed remote root.
+2. Bootstrap the remote Eagle root with `autoresearch remote bootstrap`.
+3. Submit the built-in probe with `autoresearch job submit-probe`.
+4. Poll the real PBS job with `autoresearch job poll --job-id <job_id>`.
+
+Implementation boundaries:
+
+- `src/autoresearch/bridge/remote_exec.py`
+  - wraps remote command execution and file transfer behind the attached bridge
+  - applies lexical path checks so remote paths stay within the configured remote root; it does not resolve remote symlinks or other runtime filesystem indirections
+- `src/autoresearch/bridge/remote_fs.py`
+  - creates the managed Eagle root layout
+  - writes the managed `README.remote.md` and built-in probe entrypoint
+- `src/autoresearch/cli.py`
+  - exposes `bridge exec`, `bridge copy-to`, `bridge copy-from`, `remote bootstrap`, `job submit-probe`, and `job poll`
+  - builds the probe submission request
+  - submits the probe with real `qsub`
+  - polls the submitted probe with real `qstat -fF JSON`
+- `src/autoresearch/executor/polaris.py`
+  - builds the built-in probe request from configured probe settings
+  - keeps the probe submission aligned with the Polaris job layout
+
+The remote root is still managed, not open-ended. Phase 3B only bootstraps the Eagle directory tree needed for the probe and only submits the built-in probe job.
+
+Out of scope for Phase 3B:
+
+- arbitrary remote entrypoints
+- generalized remote job submission
+- arbitrary file operations outside the managed remote root
+- non-probe PBS workflows
+
 ## Local foundation
 
 The local foundation owns:
@@ -38,7 +77,7 @@ This layer stays local to the lab server. It does not assume Polaris is reachabl
 
 ## ALCF bridge
 
-The bridge is intentionally narrow. It does not submit jobs, copy files, or execute arbitrary remote commands yet.
+The bridge is intentionally narrow. Phase 2 exposed only master-management commands; Phase 3B adds a small operational surface on top of that same attachment model.
 
 Current bridge modules:
 

@@ -46,8 +46,39 @@ def test_parse_qstat_output_extracts_key_fields() -> None:
     assert result.queue == "debug"
     assert result.comment == "Job run at Fri Apr 10 at 12:34 on (x1001:ncpus=32)"
     assert result.exec_host == "x1001/0"
+    assert result.exit_status is None
     assert result.stdout_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log"
     assert result.stderr_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stderr.log"
+
+
+def test_parse_qstat_output_extracts_exit_status_when_present() -> None:
+    text = "\n".join(
+        [
+            "Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    job_state = F",
+            "    Exit_status = 2",
+            "    queue = debug",
+        ]
+    )
+
+    result = parse_qstat_output(text)
+
+    assert result.exit_status == 2
+
+
+def test_parse_qstat_output_extracts_zero_exit_status_when_present() -> None:
+    text = "\n".join(
+        [
+            "Job Id: 123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+            "    job_state = F",
+            "    Exit_status = 0",
+            "    queue = debug",
+        ]
+    )
+
+    result = parse_qstat_output(text)
+
+    assert result.exit_status == 0
 
 
 def test_parse_qstat_output_rejects_missing_job_state() -> None:
@@ -102,8 +133,45 @@ def test_parse_qstat_json_extracts_key_fields() -> None:
     assert result.state == "Q"
     assert result.comment == "Not Running: Insufficient amount of resource: vnode"
     assert result.exec_host == "x1001/0"
+    assert result.exit_status is None
     assert result.stdout_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stdout.log"
     assert result.stderr_path == "/eagle/lc-mpi/Zhiqing/auto-research/runs/run_demo/stderr.log"
+
+
+def test_parse_qstat_json_extracts_exit_status_when_present() -> None:
+    payload = {
+        "Jobs": {
+            "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {
+                "job_state": "F",
+                "Exit_status": 2,
+                "queue": "debug",
+                "comment": "Exit code 2",
+                "exec_host": "x1001/0",
+            }
+        }
+    }
+
+    result = parse_qstat_json(json.dumps(payload))
+
+    assert result.exit_status == 2
+
+
+def test_parse_qstat_json_extracts_zero_exit_status_when_present() -> None:
+    payload = {
+        "Jobs": {
+            "123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov": {
+                "job_state": "F",
+                "Exit_status": 0,
+                "queue": "debug",
+                "comment": "Exit code 0",
+                "exec_host": "x1001/0",
+            }
+        }
+    }
+
+    result = parse_qstat_json(json.dumps(payload))
+
+    assert result.exit_status == 0
 
 
 def test_parse_qstat_json_rejects_empty_jobs() -> None:

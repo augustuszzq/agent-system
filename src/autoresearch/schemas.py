@@ -63,6 +63,7 @@ class QsubParseResult:
 class QstatParseResult:
     pbs_job_id: str
     state: str
+    exit_status: int | None = None
     queue: str | None = None
     comment: str | None = None
     exec_host: str | None = None
