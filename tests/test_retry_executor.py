@@ -288,6 +288,40 @@ def test_execute_retry_marks_request_failed_for_remote_bridge_errors(tmp_path: P
     assert updated.attempt_count == 0
 
 
+def test_execute_retry_keeps_request_claimed_when_finalize_fails(tmp_path: Path) -> None:
+    db_path, _, _, _, request = _create_retry_fixture(tmp_path)
+
+    executor = RetryExecutor(
+        db_path=db_path,
+        policy=_retry_policy(),
+        submitter=lambda **kwargs: FakeSubmitted("run_retry", "job_retry", "456.polaris"),
+        actor="operator",
+    )
+
+    original_append = executor._decision_log.append
+
+    def failing_append(**kwargs):
+        raise RuntimeError("decision write failed")
+
+    executor._decision_log.append = failing_append  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError, match="decision write failed"):
+            executor.execute(request.retry_request_id)
+    finally:
+        executor._decision_log.append = original_append  # type: ignore[method-assign]
+
+    claimed = RetryRequestRegistry(db_path).get(request.retry_request_id)
+    assert claimed.execution_status == "CLAIMED"
+    assert claimed.attempt_count == 0
+    assert claimed.result_run_id is None
+    assert claimed.result_job_id is None
+    assert claimed.result_pbs_job_id is None
+    assert claimed.executed_at is None
+    assert claimed.last_error is None
+    decisions = DecisionLog(db_path).list_for_target("retry_request", request.retry_request_id)
+    assert decisions == []
+
+
 def test_execute_retry_rejects_closed_incidents_before_submit(tmp_path: Path) -> None:
     db_path, _, _, incident, request = _create_retry_fixture(tmp_path)
     _resolve_incident(db_path, incident.incident_id)
