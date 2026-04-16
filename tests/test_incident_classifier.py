@@ -136,6 +136,15 @@ def test_classify_nccl_failure_from_stdout_tail() -> None:
     assert result.severity == "CRITICAL"
 
 
+def test_classify_benign_nccl_version_line_does_not_match() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="NCCL version 2.18.1 loaded\n")
+    )
+
+    assert result is not None
+    assert result.category == "UNKNOWN"
+
+
 def test_classify_oom_kill_is_resource_oom() -> None:
     result = classify_incident(
         _normalized(stderr_tail="oom-kill: process 1234 terminated after GPU memory pressure\n")
@@ -229,3 +238,31 @@ def test_classify_mpi_bootstrap_from_stdout_tail() -> None:
     assert result is not None
     assert result.category == "MPI_BOOTSTRAP"
     assert result.severity == "CRITICAL"
+
+
+def test_classify_benign_bootstrap_complete_does_not_match() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="bootstrap complete\n")
+    )
+
+    assert result is not None
+    assert result.category == "UNKNOWN"
+
+
+def test_rule_fingerprints_strip_timestamp_prefix_noise() -> None:
+    first = classify_incident(
+        _normalized(
+            stdout_tail="2026-04-16 01:02:03 bash: cannot cd /scratch/demo: No such file or directory\n"
+        )
+    )
+    second = classify_incident(
+        _normalized(
+            stdout_tail="2026-04-16 01:02:04 bash: cannot cd /scratch/demo: No such file or directory\n"
+        )
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.category == "ENV_PATH_ERROR"
+    assert second.category == "ENV_PATH_ERROR"
+    assert first.fingerprint == second.fingerprint

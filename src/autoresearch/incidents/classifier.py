@@ -48,11 +48,6 @@ _NCCL_PATTERNS = (
     "nccl",
     "unhandled cuda error",
 )
-_MPI_PATTERNS = (
-    "mpi_init",
-    "pmi server not found",
-    "bootstrap",
-)
 
 _RUNNING_LIKE_STATES = {"R", "E", "S"}
 
@@ -104,7 +99,7 @@ def _match_filesystem_unavailable(incident: NormalizedIncidentInput) -> Classifi
     return ClassifiedIncident(
         category="FILESYSTEM_UNAVAILABLE",
         severity="CRITICAL",
-        fingerprint=comment,
+        fingerprint=_normalize_rule_fingerprint(comment),
         matched_lines=(comment,),
         rule_name="filesystem_unavailable",
     )
@@ -122,7 +117,7 @@ def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident
     return ClassifiedIncident(
         category="RESOURCE_OOM",
         severity="CRITICAL",
-        fingerprint=line,
+        fingerprint=_normalize_rule_fingerprint(line),
         matched_lines=(line,),
         rule_name="resource_oom",
     )
@@ -138,7 +133,7 @@ def _match_resource_walltime(incident: NormalizedIncidentInput) -> ClassifiedInc
     return ClassifiedIncident(
         category="RESOURCE_WALLTIME",
         severity="HIGH",
-        fingerprint=line,
+        fingerprint=_normalize_rule_fingerprint(line),
         matched_lines=(line,),
         rule_name="resource_walltime",
     )
@@ -172,42 +167,56 @@ def _match_path_error(incident: NormalizedIncidentInput) -> ClassifiedIncident |
     return ClassifiedIncident(
         category="ENV_PATH_ERROR",
         severity="HIGH",
-        fingerprint=_normalize_text(line),
+        fingerprint=_normalize_rule_fingerprint(line),
         matched_lines=(line,),
         rule_name="env_path_error",
     )
 
 
 def _match_nccl_failure(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(
-        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
-        _NCCL_PATTERNS,
-    )
-    if line is None:
-        return None
-    return ClassifiedIncident(
-        category="NCCL_FAILURE",
-        severity="CRITICAL",
-        fingerprint=_normalize_text(line),
-        matched_lines=(line,),
-        rule_name="nccl_failure",
-    )
+    for line in _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail):
+        if not _is_nccl_failure_line(line):
+            continue
+        normalized = _normalize_rule_fingerprint(line)
+        return ClassifiedIncident(
+            category="NCCL_FAILURE",
+            severity="CRITICAL",
+            fingerprint=normalized,
+            matched_lines=(line,),
+            rule_name="nccl_failure",
+        )
+    return None
 
 
 def _match_mpi_bootstrap(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(
-        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
-        _MPI_PATTERNS,
-    )
-    if line is None:
-        return None
-    return ClassifiedIncident(
-        category="MPI_BOOTSTRAP",
-        severity="CRITICAL",
-        fingerprint=_normalize_text(line),
-        matched_lines=(line,),
-        rule_name="mpi_bootstrap",
-    )
+    for line in _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail):
+        if not _is_mpi_bootstrap_line(line):
+            continue
+        normalized = _normalize_rule_fingerprint(line)
+        return ClassifiedIncident(
+            category="MPI_BOOTSTRAP",
+            severity="CRITICAL",
+            fingerprint=normalized,
+            matched_lines=(line,),
+            rule_name="mpi_bootstrap",
+        )
+    return None
+
+
+def _is_mpi_bootstrap_line(line: str) -> bool:
+    if "mpi_init" in line or "pmi server not found" in line:
+        return True
+    if "bootstrap" not in line:
+        return False
+    return _contains_any(line, ("failed", "error", "fatal", "not found", "abort"))
+
+
+def _is_nccl_failure_line(line: str) -> bool:
+    if "nccl" not in line:
+        return False
+    if "unhandled cuda error" in line:
+        return True
+    return _contains_any(line, ("error", "warn", "failed", "fatal", "closed", "abort"))
 
 
 def _match_no_heartbeat(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
@@ -318,8 +327,33 @@ def _normalize_text(value: str | None) -> str:
     return collapsed.lower()
 
 
+def _normalize_rule_fingerprint(value: str) -> str:
+    normalized = _normalize_text(value)
+    normalized = _strip_trivial_prefix(normalized)
+    return normalized
+
+
+def _strip_trivial_prefix(value: str) -> str:
+    stripped = value
+    patterns = (
+        r"^\[[^\]]+\]\s*",
+        r"^\d{4}-\d{2}-\d{2}[ tT]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:z|[+-]\d{2}:?\d{2})?\s+",
+        r"^\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\s+",
+        r"^[a-z]{3}\s+[a-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for pattern in patterns:
+            updated = re.sub(pattern, "", stripped, count=1)
+            if updated != stripped:
+                stripped = updated
+                changed = True
+    return stripped
+
+
 def _normalize_import_fingerprint(line: str) -> str:
-    lower_line = _normalize_text(line)
+    lower_line = _normalize_rule_fingerprint(line)
 
     module_match = re.search(
         r"(?:no module named|cannot import name|module not found)\s+['\"]?([a-zA-Z0-9_.-]+)['\"]?",
