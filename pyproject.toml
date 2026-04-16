@@ -9,6 +9,7 @@ description = "Lab-server control plane for auto research workflows."
 requires-python = ">=3.11"
 dependencies = [
   "pyyaml>=6.0",
+  "Jinja2>=3.1,<4.0",
   "typer>=0.12,<1.0",
 ]
 
