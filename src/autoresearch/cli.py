@@ -309,14 +309,22 @@ def request_retry(
         source_job = run_registry.get_job(incident.job_id)
     except KeyError as error:
         _fail_cli_error(str(error))
+    if source_job.run_id != source_run.run_id:
+        _fail_cli_error(
+            f"incident {incident_id} has inconsistent run/job linkage: "
+            f"run {source_run.run_id} does not match job {source_job.job_id} run {source_job.run_id}"
+        )
 
-    record = retry_registry.create_request(
-        incident_id=incident.incident_id,
-        source_run_id=source_run.run_id,
-        source_job_id=source_job.job_id,
-        source_pbs_job_id=source_job.pbs_job_id,
-        requested_action="RETRY_SAME_CONFIG",
-    )
+    try:
+        record = retry_registry.create_request(
+            incident_id=incident.incident_id,
+            source_run_id=source_run.run_id,
+            source_job_id=source_job.job_id,
+            source_pbs_job_id=source_job.pbs_job_id,
+            requested_action="RETRY_SAME_CONFIG",
+        )
+    except ValueError as error:
+        _fail_cli_error(str(error))
     typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{incident.category}")
 
 
@@ -337,16 +345,14 @@ def approve_retry(
     retry_registry = RetryRequestRegistry(settings.paths.db_path)
     decision_log = DecisionLog(settings.paths.db_path)
     try:
-        record = retry_registry.approve(retry_request_id, actor="operator", reason=reason)
+        record = retry_registry.approve_with_decision(
+            retry_request_id,
+            actor="operator",
+            reason=reason,
+            decision_log=decision_log,
+        )
     except (KeyError, ValueError) as error:
         _fail_cli_error(str(error))
-    decision_log.append(
-        target_type="retry_request",
-        target_id=record.retry_request_id,
-        decision="approve-retry",
-        rationale=reason,
-        actor="operator",
-    )
     typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{record.execution_status}")
 
 
@@ -359,16 +365,14 @@ def reject_retry(
     retry_registry = RetryRequestRegistry(settings.paths.db_path)
     decision_log = DecisionLog(settings.paths.db_path)
     try:
-        record = retry_registry.reject(retry_request_id, actor="operator", reason=reason)
+        record = retry_registry.reject_with_decision(
+            retry_request_id,
+            actor="operator",
+            reason=reason,
+            decision_log=decision_log,
+        )
     except (KeyError, ValueError) as error:
         _fail_cli_error(str(error))
-    decision_log.append(
-        target_type="retry_request",
-        target_id=record.retry_request_id,
-        decision="reject-retry",
-        rationale=reason,
-        actor="operator",
-    )
     typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{record.execution_status}")
 
 

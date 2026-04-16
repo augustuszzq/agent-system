@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from autoresearch import cli as cli_module
@@ -935,6 +936,81 @@ def test_retry_reject_and_list_show_rejected_request(tmp_path, monkeypatch) -> N
     assert row[1] == incident_id
     assert row[3] == "REJECTED"
     assert row[4] == "NOT_STARTED"
+    decisions = DecisionLog(tmp_path / "state" / "autoresearch.db").list_for_target(
+        "retry_request", retry_request_id
+    )
+    assert [row.decision for row in decisions] == ["reject-retry"]
+
+
+def test_retry_request_surfaces_create_request_value_error_cleanly(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    incident_id, _, _ = _seed_retryable_incident(tmp_path)
+
+    def fake_create_request(self, **kwargs):
+        raise ValueError("retry request already exists")
+
+    monkeypatch.setattr(RetryRequestRegistry, "create_request", fake_create_request)
+
+    result = runner.invoke(app, ["retry", "request", "--incident-id", incident_id])
+
+    assert result.exit_code == 1
+    assert "retry request already exists" in result.stderr
+    assert RetryRequestRegistry(tmp_path / "state" / "autoresearch.db").list_requests() == []
+
+
+def test_retry_request_rejects_inconsistent_run_job_linkage_before_creation(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    run_registry = RunRegistry(db_path)
+    source_run = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    other_run = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    mismatched_job = run_registry.create_job(
+        run_id=other_run.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+    incident = IncidentRegistry(db_path).upsert_incident(
+        run_id=source_run.run_id,
+        job_id=mismatched_job.job_id,
+        severity="HIGH",
+        category="FILESYSTEM_UNAVAILABLE",
+        fingerprint="fp-retry-mismatch",
+        evidence={
+            "scan_time": "2026-04-16T12:00:00",
+            "snapshot_dir": str(tmp_path / "state" / "incidents" / mismatched_job.job_id / "scan"),
+            "qstat_comment": "filesystem unavailable",
+            "job_state": "F",
+            "exec_host": "node01",
+            "matched_lines": ["filesystem unavailable"],
+            "classifier_rule": "filesystem_unavailable",
+        },
+    )
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("create_request should not be called for inconsistent run/job linkage")
+
+    monkeypatch.setattr(RetryRequestRegistry, "create_request", fail_if_called)
+
+    result = runner.invoke(app, ["retry", "request", "--incident-id", incident.incident_id])
+
+    assert result.exit_code == 1
+    assert "inconsistent run/job linkage" in result.stderr
+    assert RetryRequestRegistry(db_path).list_requests() == []
 
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))

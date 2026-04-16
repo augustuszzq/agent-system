@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 
 from autoresearch.db import connect_db
+from autoresearch.decisions import DecisionLog
 from autoresearch.schemas import RetryAction
 
 
@@ -174,6 +175,40 @@ class RetryRequestRegistry:
 
     def reject(self, retry_request_id: str, *, actor: str, reason: str) -> RetryRequestRecord:
         return self._update_decision(retry_request_id, actor=actor, reason=reason, approval_status="REJECTED")
+
+    def approve_with_decision(
+        self,
+        retry_request_id: str,
+        *,
+        actor: str,
+        reason: str,
+        decision_log: DecisionLog,
+    ) -> RetryRequestRecord:
+        return self._update_decision_with_log(
+            retry_request_id,
+            actor=actor,
+            reason=reason,
+            approval_status="APPROVED",
+            decision_log=decision_log,
+            decision="approve-retry",
+        )
+
+    def reject_with_decision(
+        self,
+        retry_request_id: str,
+        *,
+        actor: str,
+        reason: str,
+        decision_log: DecisionLog,
+    ) -> RetryRequestRecord:
+        return self._update_decision_with_log(
+            retry_request_id,
+            actor=actor,
+            reason=reason,
+            approval_status="REJECTED",
+            decision_log=decision_log,
+            decision="reject-retry",
+        )
 
     def mark_failed(self, retry_request_id: str, *, error_text: str) -> RetryRequestRecord:
         with connect_db(self._db_path) as conn:
@@ -360,6 +395,55 @@ class RetryRequestRegistry:
                 WHERE retry_request_id = ?
                 """,
                 (approval_status, actor, reason, updated_at, retry_request_id),
+            )
+            row = conn.execute(
+                """
+                SELECT retry_request_id, incident_id, source_run_id,
+                       source_job_id, source_pbs_job_id, requested_action,
+                       approval_status, execution_status, attempt_count,
+                       approved_by, approval_reason, last_error, result_run_id,
+                       result_job_id, result_pbs_job_id, created_at, updated_at,
+                       executed_at
+                FROM retry_requests
+                WHERE retry_request_id = ?
+                """,
+                (retry_request_id,),
+            ).fetchone()
+        return self._row_to_record(row)
+
+    def _update_decision_with_log(
+        self,
+        retry_request_id: str,
+        *,
+        actor: str,
+        reason: str,
+        approval_status: str,
+        decision_log: DecisionLog,
+        decision: str,
+    ) -> RetryRequestRecord:
+        with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            record = self._get_row_for_update(conn, retry_request_id)
+            self._require_pending(record)
+            updated_at = self._now_iso()
+            conn.execute(
+                """
+                UPDATE retry_requests
+                SET approval_status = ?,
+                    approved_by = ?,
+                    approval_reason = ?,
+                    updated_at = ?
+                WHERE retry_request_id = ?
+                """,
+                (approval_status, actor, reason, updated_at, retry_request_id),
+            )
+            decision_log.append(
+                target_type="retry_request",
+                target_id=retry_request_id,
+                decision=decision,
+                rationale=reason,
+                actor=actor,
+                conn=conn,
             )
             row = conn.execute(
                 """
