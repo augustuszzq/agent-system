@@ -41,18 +41,34 @@ class DailyReportBuilder:
             lstrip_blocks=True,
         )
 
-    def build(self, *, report_date: str) -> DailyReportResult:
+    def build(
+        self,
+        *,
+        report_date: str,
+        generated_at: datetime | None = None,
+    ) -> DailyReportResult:
+        generated_at = self._normalize_generated_at(generated_at)
         with connect_db(self._db_path) as conn:
-            context = self._build_context(conn, report_date=report_date)
+            conn.execute("BEGIN")
+            context = self._build_context(conn, report_date=report_date, generated_at=generated_at)
             markdown = self._env.get_template("daily_brief.md.j2").render(**context).rstrip() + "\n"
         output_path = self._state_dir / "reports" / "daily" / f"{report_date}.md"
         return DailyReportResult(report_date=report_date, markdown=markdown, output_path=output_path)
 
-    def _build_context(self, conn: sqlite3.Connection, *, report_date: str) -> dict[str, str]:
+    def _build_context(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        report_date: str,
+        generated_at: datetime,
+    ) -> dict[str, str]:
         return {
             "report_date": report_date,
             "paper_delta_block": self._build_paper_delta_block(),
-            "run_status_block": self._build_run_status_block(conn, report_date=report_date),
+            "run_status_block": self._build_run_status_block(
+                conn,
+                generated_at=generated_at,
+            ),
             "incident_summary_block": self._build_incident_summary_block(conn),
             "pending_decisions_block": self._build_pending_decisions_block(conn),
         }
@@ -60,7 +76,12 @@ class DailyReportBuilder:
     def _build_paper_delta_block(self) -> str:
         return "\n".join(_PAPER_FALLBACK_LINES)
 
-    def _build_run_status_block(self, conn: sqlite3.Connection, *, report_date: str) -> str:
+    def _build_run_status_block(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        generated_at: datetime,
+    ) -> str:
         runs = self._fetch_rows(
             conn,
             """
@@ -79,23 +100,22 @@ class DailyReportBuilder:
         )
 
         active_runs = sum(row["status"] in _ACTIVE_RUN_STATUSES for row in runs)
-        cutoff = self._report_cutoff(report_date)
         finished_overnight = sum(
             row["status"] == "SUCCEEDED"
             and row["ended_at"] is not None
-            and self._within_last_24_hours(row["ended_at"], cutoff)
+            and self._within_last_24_hours(row["ended_at"], generated_at)
             for row in runs
         )
         failed_runs = sum(
             row["status"] == "FAILED"
             and row["ended_at"] is not None
-            and self._within_last_24_hours(row["ended_at"], cutoff)
+            and self._within_last_24_hours(row["ended_at"], generated_at)
             for row in runs
         )
         auto_retried = sum(
             row["execution_status"] == "SUBMITTED"
             and row["executed_at"] is not None
-            and self._within_last_24_hours(row["executed_at"], cutoff)
+            and self._within_last_24_hours(row["executed_at"], generated_at)
             for row in retry_requests
         )
         awaiting_approval = sum(row["approval_status"] == "PENDING" for row in retry_requests)
@@ -181,14 +201,18 @@ class DailyReportBuilder:
         return parsed.astimezone(UTC)
 
     @classmethod
-    def _report_cutoff(cls, report_date: str) -> datetime:
-        parsed_date = datetime.fromisoformat(report_date)
-        return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC)
+    @staticmethod
+    def _within_last_24_hours(value: str, generated_at: datetime) -> bool:
+        observed = DailyReportBuilder._parse_iso_datetime(value)
+        return generated_at - timedelta(days=1) <= observed < generated_at
 
-    @classmethod
-    def _within_last_24_hours(cls, value: str, cutoff: datetime) -> bool:
-        observed = cls._parse_iso_datetime(value)
-        return cutoff - timedelta(days=1) <= observed < cutoff
+    @staticmethod
+    def _normalize_generated_at(generated_at: datetime | None) -> datetime:
+        if generated_at is None:
+            return datetime.now(UTC)
+        if generated_at.tzinfo is None:
+            return generated_at.replace(tzinfo=UTC)
+        return generated_at.astimezone(UTC)
 
     @staticmethod
     def _incident_evidence_line(evidence_json: str) -> str:

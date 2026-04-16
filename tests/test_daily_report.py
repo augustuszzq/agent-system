@@ -11,6 +11,7 @@ from autoresearch.reports.daily import DailyReportBuilder
 
 
 REPORT_DATE = "2026-04-16"
+GENERATED_AT = datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
 
 
 def _seed_daily_report_state(db_path: Path, *, pending_requests: int = 2) -> None:
@@ -74,8 +75,8 @@ def _seed_daily_report_state(db_path: Path, *, pending_requests: int = 2) -> Non
                     "probe",
                     "demo",
                     "2026-04-15T23:00:00+00:00",
-                    "2026-04-16T02:00:00+00:00",
-                    "2026-04-16T03:00:00+00:00",
+                    "2026-04-15T06:00:00+00:00",
+                    "2026-04-15T06:30:00+00:00",
                     "SUCCEEDED",
                     None,
                     0,
@@ -89,8 +90,8 @@ def _seed_daily_report_state(db_path: Path, *, pending_requests: int = 2) -> Non
                     "probe",
                     "demo",
                     "2026-04-15T23:10:00+00:00",
-                    "2026-04-16T03:00:00+00:00",
-                    "2026-04-16T04:00:00+00:00",
+                    "2026-04-15T07:00:00+00:00",
+                    "2026-04-15T07:30:00+00:00",
                     "FAILED",
                     None,
                     0,
@@ -222,9 +223,9 @@ def _seed_daily_report_state(db_path: Path, *, pending_requests: int = 2) -> Non
                 "run_retry2",
                 "job_retry2",
                 "pbs_retry2",
-                "2026-04-16T02:00:00+00:00",
-                "2026-04-16T02:05:00+00:00",
-                "2026-04-16T02:05:00+00:00",
+                "2026-04-15T06:00:00+00:00",
+                "2026-04-15T06:05:00+00:00",
+                "2026-04-15T06:05:00+00:00",
             )
         )
         base_time = datetime(2026, 4, 16, 6, 0, tzinfo=UTC)
@@ -275,7 +276,7 @@ def test_build_daily_report_uses_paper_fallback_when_papers_are_unavailable(
 
     builder = DailyReportBuilder(db_path=db_path, state_dir=tmp_path / "state")
 
-    result = builder.build(report_date=REPORT_DATE)
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
 
     assert result.report_date == REPORT_DATE
     assert result.output_path == tmp_path / "state" / "reports" / "daily" / f"{REPORT_DATE}.md"
@@ -296,7 +297,7 @@ def test_build_daily_report_summarizes_runs_incidents_and_pending_retries(
 
     builder = DailyReportBuilder(db_path=db_path, state_dir=tmp_path / "state")
 
-    result = builder.build(report_date=REPORT_DATE)
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
 
     assert "- Active runs: 1" in result.markdown
     assert "- Finished overnight: 1" in result.markdown
@@ -327,7 +328,7 @@ def test_build_daily_report_limits_pending_decisions_to_three_oldest_requests(
 
     builder = DailyReportBuilder(db_path=db_path, state_dir=tmp_path / "state")
 
-    result = builder.build(report_date=REPORT_DATE)
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
 
     assert "- Awaiting approval: 4" in result.markdown
     assert "1. Approve retry retry_pending_1 for incident incident_oom" in result.markdown
@@ -357,7 +358,44 @@ def test_build_daily_report_uses_single_db_connection_snapshot(
 
     monkeypatch.setattr(daily_module, "connect_db", tracking_connect_db)
 
-    result = builder.build(report_date=REPORT_DATE)
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
 
     assert connect_calls == 1
+    assert result.markdown
+
+
+def test_build_daily_report_begins_read_transaction_before_selects(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    _seed_daily_report_state(db_path)
+
+    builder = DailyReportBuilder(db_path=db_path, state_dir=tmp_path / "state")
+    calls: list[str] = []
+    real_connect_db = daily_module.connect_db
+
+    class ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=()):
+            calls.append(sql.strip().split()[0].upper())
+            return self._conn.execute(sql, params)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    @contextmanager
+    def tracking_connect_db(path: Path):
+        with real_connect_db(path) as conn:
+            yield ConnectionProxy(conn)
+
+    monkeypatch.setattr(daily_module, "connect_db", tracking_connect_db)
+
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
+
+    assert calls[0] == "BEGIN"
+    assert "SELECT" in calls[1:]
     assert result.markdown
