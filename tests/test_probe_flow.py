@@ -5,6 +5,7 @@ import pytest
 
 from autoresearch import cli as cli_module
 from autoresearch.bridge.remote_exec import RemoteBridgeError
+from autoresearch.executor.probe_submit import submit_live_probe_run
 from autoresearch.executor.pbs import build_qstat_command, build_qsub_command
 from autoresearch.executor.polaris import build_probe_job_request
 from autoresearch.db import init_db
@@ -233,6 +234,65 @@ def test_submit_probe_job_persists_submission_and_updates_registry(
     assert job_record.pbs_job_id == pbs_job_id
     assert job_record.queue == "prod"
     assert job_record.walltime == "00:20:00"
+
+
+def test_submit_live_probe_run_supports_custom_run_kind_and_notes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+
+    result = submit_live_probe_run(
+        settings=settings,
+        service=service,
+        run_kind="probe-retry",
+        notes="retry_request=retry_123",
+        project="ALCF_PROJECT",
+        queue="debug",
+        walltime="00:10:00",
+    )
+
+    registry = RunRegistry(settings.paths.db_path)
+    run_record = registry.get_run(result.run_id)
+    job_record = registry.get_job(result.job_id)
+
+    assert run_record.run_kind == "probe-retry"
+    assert run_record.notes == "retry_request=retry_123"
+    assert job_record.state == "SUBMITTED"
+
+
+def test_job_submit_probe_reuses_shared_submit_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_submit(**kwargs):
+        calls.append((kwargs["run_kind"], kwargs["notes"]))
+        return type(
+            "Result",
+            (),
+            {"run_id": "run_demo", "job_id": "job_demo", "pbs_job_id": "123.polaris"},
+        )()
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: ProbeBridgeService(qsub_output="123"))
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+    monkeypatch.setattr(cli_module, "submit_live_probe_run", fake_submit)
+
+    run_id, job_id, pbs_job_id = cli_module.submit_probe_job(
+        project="ALCF_PROJECT",
+        queue="debug",
+        walltime="00:10:00",
+    )
+
+    assert (run_id, job_id, pbs_job_id) == ("run_demo", "job_demo", "123.polaris")
+    assert calls == [("probe", None)]
 
 
 def test_submit_probe_job_creates_submit_directory_before_upload(

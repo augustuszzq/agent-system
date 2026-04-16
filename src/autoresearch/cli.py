@@ -26,7 +26,8 @@ from autoresearch.executor.pbs import (
     parse_qsub_output,
     render_pbs_script,
 )
-from autoresearch.executor.polaris import build_polaris_job_request, build_probe_job_request
+from autoresearch.executor.polaris import build_polaris_job_request
+from autoresearch.executor.probe_submit import submit_live_probe_run
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import CommandResult, RunCreateRequest
 from autoresearch.settings import ProbeSettings, load_settings
@@ -223,79 +224,16 @@ def submit_probe_job(
         queue=queue,
         walltime=walltime,
     )
-    registry = RunRegistry(settings.paths.db_path)
-    run_record = registry.create_run(
-        RunCreateRequest(run_kind="probe", project=probe_settings.project)
+    submitted = submit_live_probe_run(
+        settings=settings,
+        service=service,
+        run_kind="probe",
+        notes=None,
+        project=probe_settings.project,
+        queue=probe_settings.queue,
+        walltime=probe_settings.walltime,
     )
-
-    request = build_probe_job_request(
-        run_id=run_record.run_id,
-        entrypoint_path=f"{settings.remote_root}/jobs/probe/entrypoint.sh",
-        remote_root=settings.remote_root,
-        probe_settings=probe_settings,
-        queue=queue,
-        walltime=walltime,
-    )
-    rendered = render_pbs_script(request)
-    job_record = registry.create_job(
-        run_id=run_record.run_id,
-        backend="pbs",
-        queue=request.queue,
-        walltime=request.walltime,
-        filesystems=request.filesystems,
-        select_expr=request.select_expr,
-        place_expr=request.place_expr,
-        submit_script_path=request.submit_script_path,
-        stdout_path=request.stdout_path,
-        stderr_path=request.stderr_path,
-    )
-    registry.get_job(job_record.job_id)
-
-    temp_script = _write_temporary_script(rendered.script_text, run_record.run_id)
-    try:
-        submit_parent_dir = str(Path(request.submit_script_path).parent)
-        mkdir_result = execute_remote_command(
-            service,
-            f"mkdir -p {shlex.quote(submit_parent_dir)}",
-        )
-        if mkdir_result.returncode != 0:
-            raise RemoteBridgeError(
-                mkdir_result.stderr.strip()
-                or f"failed to create submit directory: {submit_parent_dir}"
-            )
-
-        copy_result = copy_to_remote(service, temp_script, request.submit_script_path, settings.remote_root)
-        if copy_result.returncode != 0:
-            raise RemoteBridgeError(
-                copy_result.stderr.strip()
-                or f"failed to upload submit script: {request.submit_script_path}"
-            )
-
-        run_log_parent_dir = str(Path(request.stdout_path).parent)
-        mkdir_result = execute_remote_command(
-            service,
-            f"mkdir -p {shlex.quote(run_log_parent_dir)}",
-        )
-        if mkdir_result.returncode != 0:
-            raise RemoteBridgeError(
-                mkdir_result.stderr.strip()
-                or f"failed to create run log directory: {run_log_parent_dir}"
-            )
-
-        qsub_command = shlex.join(build_qsub_command(request.submit_script_path))
-        qsub_result = execute_remote_command(service, qsub_command)
-        if qsub_result.returncode != 0:
-            raise RemoteBridgeError(
-                qsub_result.stderr.strip() or f"qsub failed with exit code {qsub_result.returncode}"
-            )
-        try:
-            qsub_parse = parse_qsub_output(qsub_result.stdout)
-        except ValueError as exc:
-            raise RemoteBridgeError(str(exc)) from exc
-        registry.mark_job_submitted(job_record.job_id, qsub_parse.pbs_job_id)
-        return run_record.run_id, job_record.job_id, qsub_parse.pbs_job_id
-    finally:
-        temp_script.unlink(missing_ok=True)
+    return submitted.run_id, submitted.job_id, submitted.pbs_job_id
 
 
 def poll_probe_job(job_id: str) -> tuple[str, str]:
