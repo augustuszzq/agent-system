@@ -399,6 +399,7 @@ def test_job_poll_propagates_remote_bridge_error(monkeypatch) -> None:
 
 def test_report_daily_prints_and_writes_report(tmp_path: Path, monkeypatch) -> None:
     report_date = "2026-04-16"
+    generated_at = real_datetime(2026, 4, 16, 23, 59, 59, tzinfo=UTC)
     settings = SimpleNamespace(
         paths=SimpleNamespace(
             db_path=tmp_path / "state" / "autoresearch.db",
@@ -412,8 +413,9 @@ def test_report_daily_prints_and_writes_report(tmp_path: Path, monkeypatch) -> N
             captured["db_path"] = db_path
             captured["state_dir"] = state_dir
 
-        def build(self, *, report_date: str):
+        def build(self, *, report_date: str, generated_at):
             captured["report_date"] = report_date
+            captured["generated_at"] = generated_at
             return SimpleNamespace(
                 report_date=report_date,
                 markdown=f"# Daily Brief {report_date}\n\n## Paper Delta\n- fake\n",
@@ -432,7 +434,7 @@ def test_report_daily_prints_and_writes_report(tmp_path: Path, monkeypatch) -> N
     class FakeDateTime:
         @staticmethod
         def now(tz):
-            return real_datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
+            return generated_at
 
     monkeypatch.setattr(cli_module, "datetime", FakeDateTime)
 
@@ -442,6 +444,7 @@ def test_report_daily_prints_and_writes_report(tmp_path: Path, monkeypatch) -> N
     assert captured["db_path"] == settings.paths.db_path
     assert captured["state_dir"] == settings.paths.state_dir
     assert captured["report_date"] == report_date
+    assert captured["generated_at"] == generated_at
     assert result.stdout == f"# Daily Brief {report_date}\n\n## Paper Delta\n- fake\n"
     written_path = tmp_path / "state" / "reports" / "daily" / f"{report_date}.md"
     assert written_path.read_text(encoding="utf-8") == result.stdout

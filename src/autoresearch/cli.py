@@ -347,8 +347,9 @@ def report_daily() -> None:
         db_path=settings.paths.db_path,
         state_dir=settings.paths.state_dir,
     )
-    report_date = datetime.now(UTC).date().isoformat()
-    result = builder.build(report_date=report_date)
+    generated_at = datetime.now(UTC)
+    report_date = generated_at.date().isoformat()
+    result = builder.build(report_date=report_date, generated_at=generated_at)
     builder.write(result)
     typer.echo(result.markdown, nl=False)
 
