@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import posixpath
 import shlex
 from typing import Protocol
 
+from autoresearch.bridge.remote_exec import RemoteBridgeError, ensure_remote_path_within_root
 from autoresearch.executor.pbs import build_qstat_command, parse_qstat_json
 from autoresearch.paths import AppPaths, incident_snapshot_dir, incident_state_dir
 from autoresearch.runs.registry import JobRecord
@@ -75,14 +77,20 @@ def _fetch_live_snapshot(
     except (ValueError, TypeError) as exc:
         raise IncidentFetchError("qstat fetch returned invalid job data") from exc
 
+    managed_root = _managed_remote_root(job_record)
+    stdout_path = _preferred_remote_path(qstat.stdout_path, job_record.stdout_path, managed_root)
+    stderr_path = _preferred_remote_path(qstat.stderr_path, job_record.stderr_path, managed_root)
+    if stdout_path is None and stderr_path is None:
+        raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr paths")
+
     stdout_tail = _tail_remote_path(
         bridge_client,
-        _preferred_remote_path(qstat.stdout_path, job_record.stdout_path),
+        stdout_path,
         "stdout",
     )
     stderr_tail = _tail_remote_path(
         bridge_client,
-        _preferred_remote_path(qstat.stderr_path, job_record.stderr_path),
+        stderr_path,
         "stderr",
     )
 
@@ -125,10 +133,50 @@ def _scan_time_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def _preferred_remote_path(primary: str | None, fallback: str | None) -> str | None:
-    if primary is not None and primary.strip():
-        return primary
-    return fallback
+def _preferred_remote_path(
+    primary: str | None,
+    fallback: str | None,
+    managed_root: str | None,
+) -> str | None:
+    for candidate in (primary, fallback):
+        normalized = _validated_remote_path(candidate, managed_root)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _validated_remote_path(candidate: str | None, managed_root: str | None) -> str | None:
+    if candidate is None or not candidate.strip():
+        return None
+    if managed_root is None:
+        return candidate
+    try:
+        return ensure_remote_path_within_root(candidate, managed_root)
+    except RemoteBridgeError:
+        return None
+
+
+def _managed_remote_root(job_record: JobRecord) -> str | None:
+    for candidate in (
+        job_record.submit_script_path,
+        job_record.stdout_path,
+        job_record.stderr_path,
+    ):
+        root = _infer_remote_root(candidate)
+        if root is not None:
+            return root
+    return None
+
+
+def _infer_remote_root(candidate: str | None) -> str | None:
+    if candidate is None or not candidate.strip():
+        return None
+
+    normalized = posixpath.normpath(candidate.strip())
+    for marker in ("/runs/", "/jobs/", "/repo/"):
+        if marker in normalized:
+            return normalized.split(marker, 1)[0]
+    return None
 
 
 def _allocate_snapshot_scan_time(paths: AppPaths, job_id: str, base_scan_time: str) -> str:

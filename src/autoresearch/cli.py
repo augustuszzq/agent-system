@@ -367,7 +367,7 @@ def scan_incident(
         raise typer.Exit(code=1)
     classified = classify_incident(normalized)
     if classified is None:
-        typer.echo(f"No incident detected for job {job_id}.")
+        typer.echo(f"No incident detected for job {job_id} (source={fetched.source}).")
         return
 
     incident_registry = IncidentRegistry(settings.paths.db_path)
@@ -383,6 +383,7 @@ def scan_incident(
         ).fetchone()
     was_existing = existing_row is not None
     evidence = {
+        "evidence_source": fetched.source,
         "scan_time": normalized.scan_time,
         "snapshot_dir": str(normalized.snapshot_dir),
         "qstat_comment": normalized.comment,
@@ -400,7 +401,10 @@ def scan_incident(
         evidence=evidence,
     )
     action = "updated" if was_existing else "created"
-    typer.echo(f"{action.capitalize()} incident {record.incident_id} for job {job_id}")
+    typer.echo(
+        f"{action.capitalize()} incident {record.incident_id} for job {job_id} "
+        f"(source={fetched.source})"
+    )
 
 
 @incident_app.command("list")

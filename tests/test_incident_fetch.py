@@ -143,12 +143,12 @@ def test_collect_incident_evidence_prefers_qstat_log_paths_for_live_tails(
         }
     )
     qstat_payload = json.loads(_fixture_text("qstat_running.json"))
-    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "polaris:/remote/qstat/stdout.log"
-    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "polaris:/remote/qstat/stderr.log"
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "polaris:/remote/repo/qstat/stdout.log"
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "polaris:/remote/repo/qstat/stderr.log"
     qstat_text = json.dumps(qstat_payload)
     qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
-    stdout_command = "tail -n 200 /remote/qstat/stdout.log"
-    stderr_command = "tail -n 200 /remote/qstat/stderr.log"
+    stdout_command = "tail -n 200 /remote/repo/qstat/stdout.log"
+    stderr_command = "tail -n 200 /remote/repo/qstat/stderr.log"
     bridge = FakeBridgeClient(
         state="ATTACHED",
         exec_results={
@@ -181,6 +181,42 @@ def test_collect_incident_evidence_falls_back_to_job_log_paths_when_qstat_paths_
     qstat_payload = json.loads(_fixture_text("qstat_running.json"))
     qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "   "
     qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "\t"
+    qstat_text = json.dumps(qstat_payload)
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
+    stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=qstat_text),
+            stdout_command: _command_result(stdout="stdout from stored path\n"),
+            stderr_command: _command_result(stdout="stderr from stored path\n"),
+        },
+    )
+
+    result = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+    )
+
+    assert result.source == "live"
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "stdout from stored path\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "stderr from stored path\n"
+    assert bridge.exec_calls == [qstat_command, stdout_command, stderr_command]
+
+
+def test_collect_incident_evidence_rejects_out_of_root_qstat_paths_and_uses_stored_paths(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents.fetch import collect_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    qstat_payload = json.loads(_fixture_text("qstat_running.json"))
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "polaris:/etc/passwd"
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "polaris:/var/log/messages"
     qstat_text = json.dumps(qstat_payload)
     qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
     stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
@@ -245,6 +281,38 @@ def test_collect_incident_evidence_raises_when_no_live_or_local_evidence(
     bridge = FakeBridgeClient(state="DETACHED")
 
     with pytest.raises(IncidentFetchError, match="No incident evidence available"):
+        collect_incident_evidence(
+            paths=paths,
+            job_record=job_record,
+            bridge_client=bridge,
+        )
+
+
+def test_collect_incident_evidence_raises_when_live_log_paths_are_unusable(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents.fetch import IncidentFetchError, collect_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    job_record = job_record.__class__(
+        **{
+            **job_record.__dict__,
+            "stdout_path": None,
+            "stderr_path": "   ",
+        }
+    )
+    qstat_payload = json.loads(_fixture_text("qstat_running.json"))
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = " "
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "\t"
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={qstat_command: _command_result(stdout=json.dumps(qstat_payload))},
+    )
+
+    with pytest.raises(IncidentFetchError, match="has no usable stdout/stderr paths"):
         collect_incident_evidence(
             paths=paths,
             job_record=job_record,

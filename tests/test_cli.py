@@ -493,12 +493,14 @@ def test_incident_scan_reports_created_incident_with_monkeypatched_fetch(tmp_pat
     expected_paths = cli_module.load_settings().paths
     assert collect_calls == [(expected_paths, job_record, fake_bridge)]
     assert "created incident" in result.stdout.lower()
+    assert "source=live" in result.stdout
 
     incident_registry = IncidentRegistry(tmp_path / "state" / "autoresearch.db")
     records = incident_registry.list_open_incidents()
     assert len(records) == 1
     assert records[0].category == "ENV_PATH_ERROR"
     assert records[0].evidence == {
+        "evidence_source": "live",
         "scan_time": "2026-04-16T12:00:00",
         "snapshot_dir": str(fake_snapshot.snapshot_dir),
         "qstat_comment": "cannot open",
@@ -566,6 +568,7 @@ def test_incident_scan_reports_no_incident_when_classifier_returns_none(tmp_path
 
     assert result.exit_code == 0
     assert "No incident detected for job" in result.stdout
+    assert "source=live" in result.stdout
     assert IncidentRegistry(tmp_path / "state" / "autoresearch.db").list_open_incidents() == []
 
 
@@ -758,6 +761,7 @@ def test_incident_scan_reports_updated_incident_when_matching_row_exists(tmp_pat
 
     assert result.exit_code == 0
     assert "updated incident" in result.stdout.lower()
+    assert "source=live" in result.stdout
 
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
