@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 import sqlite3
 
@@ -41,29 +42,27 @@ class DailyReportBuilder:
         )
 
     def build(self, *, report_date: str) -> DailyReportResult:
-        context = self._build_context(report_date=report_date)
-        markdown = self._env.get_template("daily_brief.md.j2").render(**context).rstrip() + "\n"
+        with connect_db(self._db_path) as conn:
+            context = self._build_context(conn, report_date=report_date)
+            markdown = self._env.get_template("daily_brief.md.j2").render(**context).rstrip() + "\n"
         output_path = self._state_dir / "reports" / "daily" / f"{report_date}.md"
-        return DailyReportResult(
-            report_date=report_date,
-            markdown=markdown,
-            output_path=output_path,
-        )
+        return DailyReportResult(report_date=report_date, markdown=markdown, output_path=output_path)
 
-    def _build_context(self, *, report_date: str) -> dict[str, str]:
+    def _build_context(self, conn: sqlite3.Connection, *, report_date: str) -> dict[str, str]:
         return {
             "report_date": report_date,
             "paper_delta_block": self._build_paper_delta_block(),
-            "run_status_block": self._build_run_status_block(report_date=report_date),
-            "incident_summary_block": self._build_incident_summary_block(),
-            "pending_decisions_block": self._build_pending_decisions_block(),
+            "run_status_block": self._build_run_status_block(conn, report_date=report_date),
+            "incident_summary_block": self._build_incident_summary_block(conn),
+            "pending_decisions_block": self._build_pending_decisions_block(conn),
         }
 
     def _build_paper_delta_block(self) -> str:
         return "\n".join(_PAPER_FALLBACK_LINES)
 
-    def _build_run_status_block(self, *, report_date: str) -> str:
+    def _build_run_status_block(self, conn: sqlite3.Connection, *, report_date: str) -> str:
         runs = self._fetch_rows(
+            conn,
             """
             SELECT run_id, status, ended_at
             FROM runs
@@ -71,22 +70,32 @@ class DailyReportBuilder:
             """
         )
         retry_requests = self._fetch_rows(
+            conn,
             """
-            SELECT approval_status, execution_status
+            SELECT approval_status, execution_status, executed_at
             FROM retry_requests
             ORDER BY created_at ASC, retry_request_id ASC
             """
         )
 
         active_runs = sum(row["status"] in _ACTIVE_RUN_STATUSES for row in runs)
+        cutoff = self._report_cutoff(report_date)
         finished_overnight = sum(
-            self._iso_date(row["ended_at"]) == report_date and row["status"] != "FAILED"
+            row["status"] == "SUCCEEDED"
+            and row["ended_at"] is not None
+            and self._within_last_24_hours(row["ended_at"], cutoff)
             for row in runs
-            if row["ended_at"]
         )
-        failed_runs = sum(row["status"] == "FAILED" for row in runs)
+        failed_runs = sum(
+            row["status"] == "FAILED"
+            and row["ended_at"] is not None
+            and self._within_last_24_hours(row["ended_at"], cutoff)
+            for row in runs
+        )
         auto_retried = sum(
-            row["approval_status"] == "APPROVED" and row["execution_status"] == "SUBMITTED"
+            row["execution_status"] == "SUBMITTED"
+            and row["executed_at"] is not None
+            and self._within_last_24_hours(row["executed_at"], cutoff)
             for row in retry_requests
         )
         awaiting_approval = sum(row["approval_status"] == "PENDING" for row in retry_requests)
@@ -101,10 +110,12 @@ class DailyReportBuilder:
             ]
         )
 
-    def _build_incident_summary_block(self) -> str:
+    def _build_incident_summary_block(self, conn: sqlite3.Connection) -> str:
         incidents = self._fetch_rows(
+            conn,
             """
-            SELECT incident_id, severity, category, created_at, updated_at
+            SELECT incident_id, run_id, job_id, severity, category, evidence_json,
+                   created_at, updated_at
             FROM incidents
             WHERE status = 'OPEN'
             ORDER BY updated_at DESC, created_at DESC, incident_id DESC
@@ -128,13 +139,17 @@ class DailyReportBuilder:
         if top_incidents:
             lines.append("- Top open incidents:")
             for index, row in enumerate(top_incidents, start=1):
+                evidence = self._incident_evidence_line(row["evidence_json"])
                 lines.append(
-                    f"{index}. {row['incident_id']} ({row['severity']}) {row['category']}"
+                    f"{index}. {row['incident_id']} | {row['category']} | {row['severity']} | "
+                    f"{row['run_id'] or '-'} | {row['job_id'] or '-'}"
                 )
+                lines.append(f"   Evidence: {evidence}")
         return "\n".join(lines)
 
-    def _build_pending_decisions_block(self) -> str:
+    def _build_pending_decisions_block(self, conn: sqlite3.Connection) -> str:
         requests = self._fetch_rows(
+            conn,
             """
             SELECT retry_request_id, incident_id, created_at
             FROM retry_requests
@@ -152,12 +167,40 @@ class DailyReportBuilder:
         ]
         return "\n".join(lines)
 
-    def _fetch_rows(self, query: str, params: tuple[object, ...] = ()) -> list[sqlite3.Row]:
-        with connect_db(self._db_path) as conn:
-            rows = conn.execute(query, params).fetchall()
-        return rows
+    def _fetch_rows(
+        self, conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()
+    ) -> list[sqlite3.Row]:
+        return conn.execute(query, params).fetchall()
 
     @staticmethod
-    def _iso_date(value: str) -> str:
+    def _parse_iso_datetime(value: str) -> datetime:
         normalized = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(normalized).date().isoformat()
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    @classmethod
+    def _report_cutoff(cls, report_date: str) -> datetime:
+        parsed_date = datetime.fromisoformat(report_date)
+        return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC)
+
+    @classmethod
+    def _within_last_24_hours(cls, value: str, cutoff: datetime) -> bool:
+        observed = cls._parse_iso_datetime(value)
+        return cutoff - timedelta(days=1) <= observed < cutoff
+
+    @staticmethod
+    def _incident_evidence_line(evidence_json: str) -> str:
+        evidence = json.loads(evidence_json)
+        qstat_comment = evidence.get("qstat_comment")
+        if isinstance(qstat_comment, str) and qstat_comment.strip():
+            return qstat_comment.strip()
+
+        matched_lines = evidence.get("matched_lines")
+        if isinstance(matched_lines, list) and matched_lines:
+            first_line = matched_lines[0]
+            if isinstance(first_line, str) and first_line.strip():
+                return first_line.strip()
+
+        return "evidence unavailable"
