@@ -271,9 +271,7 @@ def _classify_unknown(incident: NormalizedIncidentInput) -> ClassifiedIncident:
     stdout_lines = tuple(_iter_nonempty_lines(incident.stdout_tail))
     stderr_lines = tuple(_iter_nonempty_lines(incident.stderr_tail))
     comment = _normalize_text(incident.comment)
-    fingerprint_parts = [comment, "\n".join(stderr_lines[:3])]
-    if not comment and not stderr_lines:
-        fingerprint_parts.append("\n".join(stdout_lines[:3]))
+    fingerprint_parts = [comment, "\n".join(stderr_lines[:3]), "\n".join(stdout_lines[:3])]
     fingerprint_source = "\n".join(part for part in fingerprint_parts if part)
     fingerprint = sha256(fingerprint_source.encode("utf-8")).hexdigest()
     matched_lines: tuple[str, ...]

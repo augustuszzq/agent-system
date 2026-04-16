@@ -77,12 +77,12 @@ def _fetch_live_snapshot(
 
     stdout_tail = _tail_remote_path(
         bridge_client,
-        qstat.stdout_path if qstat.stdout_path else job_record.stdout_path,
+        _preferred_remote_path(qstat.stdout_path, job_record.stdout_path),
         "stdout",
     )
     stderr_tail = _tail_remote_path(
         bridge_client,
-        qstat.stderr_path if qstat.stderr_path else job_record.stderr_path,
+        _preferred_remote_path(qstat.stderr_path, job_record.stderr_path),
         "stderr",
     )
 
@@ -123,6 +123,12 @@ def _tail_remote_path(bridge_client: _BridgeClient, remote_path: str | None, lab
 
 def _scan_time_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _preferred_remote_path(primary: str | None, fallback: str | None) -> str | None:
+    if primary is not None and primary.strip():
+        return primary
+    return fallback
 
 
 def _allocate_snapshot_scan_time(paths: AppPaths, job_id: str, base_scan_time: str) -> str:

@@ -322,6 +322,27 @@ def test_classify_unknown_uses_stdout_only_evidence_for_fingerprint_and_matched_
     assert first.fingerprint != second.fingerprint
 
 
+def test_classify_unknown_uses_stdout_to_distinguish_mixed_evidence() -> None:
+    first = classify_incident(
+        _normalized(
+            stdout_tail="worker-1 failed during teardown\n",
+            stderr_tail="generic failure banner\n",
+        )
+    )
+    second = classify_incident(
+        _normalized(
+            stdout_tail="worker-2 failed during teardown\n",
+            stderr_tail="generic failure banner\n",
+        )
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.category == "UNKNOWN"
+    assert second.category == "UNKNOWN"
+    assert first.fingerprint != second.fingerprint
+
+
 def test_classify_path_error_matches_cannot_cd() -> None:
     result = classify_incident(
         _normalized(stderr_tail="bash: cannot cd /scratch/demo: No such file or directory\n")
