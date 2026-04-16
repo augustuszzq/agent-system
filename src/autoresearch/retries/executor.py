@@ -21,8 +21,27 @@ class RetryExecutor:
         self._decision_log = DecisionLog(db_path)
 
     def execute(self, retry_request_id: str) -> RetryRequestRecord:
-        unexpected_exc: Exception | None = None
-        unexpected_tb = None
+        request, incident, source_run, source_job, notes = self._prepare_execution(retry_request_id)
+
+        try:
+            submitted = self._submitter(
+                run_kind="probe-retry",
+                notes=notes,
+                project=source_run["project"],
+                queue=source_job["queue"],
+                walltime=source_job["walltime"],
+            )
+        except RemoteBridgeError as exc:
+            return self._mark_failed(retry_request_id, str(exc))
+        except Exception as exc:
+            self._mark_failed(retry_request_id, str(exc))
+            raise
+
+        return self._finalize_success(retry_request_id, submitted)
+
+    def _prepare_execution(
+        self, retry_request_id: str
+    ) -> tuple[RetryRequestRecord, sqlite3.Row, sqlite3.Row, sqlite3.Row, str]:
         with connect_db(self._db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             request = self._retry_registry.load_for_execution(conn, retry_request_id)
@@ -42,57 +61,44 @@ class RetryExecutor:
                 raise ValueError("retry request category is not eligible")
 
             self._retry_registry.claim_execution(conn, retry_request_id)
-
             notes = (
                 f"source_incident={incident['incident_id']}\n"
                 f"source_job={source_job['job_id']}\n"
                 f"retry_request={request.retry_request_id}"
             )
+        return request, incident, source_run, source_job, notes
 
-            try:
-                submitted = self._submitter(
-                    run_kind="probe-retry",
-                    notes=notes,
-                    project=source_run["project"],
-                    queue=source_job["queue"],
-                    walltime=source_job["walltime"],
-                )
-            except RemoteBridgeError as exc:
-                return self._retry_registry.mark_failed_in_connection(
-                    conn,
-                    retry_request_id,
-                    error_text=str(exc),
-                )
-            except Exception as exc:
-                self._retry_registry.mark_failed_in_connection(
-                    conn,
-                    retry_request_id,
-                    error_text=str(exc),
-                )
-                unexpected_exc = exc
-                unexpected_tb = exc.__traceback__
-                submitted = None
+    def _finalize_success(
+        self, retry_request_id: str, submitted
+    ) -> RetryRequestRecord:
+        with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            updated = self._retry_registry.mark_submitted_in_connection(
+                conn,
+                retry_request_id,
+                result_run_id=submitted.run_id,
+                result_job_id=submitted.job_id,
+                result_pbs_job_id=submitted.pbs_job_id,
+                executed_at=datetime.now(UTC).isoformat(),
+            )
+            self._decision_log.append(
+                target_type="retry_request",
+                target_id=retry_request_id,
+                decision="execute-approved-retry",
+                rationale=f"submitted {submitted.job_id}",
+                actor=self._actor,
+                conn=conn,
+            )
+        return updated
 
-            if submitted is not None:
-                updated = self._retry_registry.mark_submitted_in_connection(
-                    conn,
-                    retry_request_id,
-                    result_run_id=submitted.run_id,
-                    result_job_id=submitted.job_id,
-                    result_pbs_job_id=submitted.pbs_job_id,
-                    executed_at=datetime.now(UTC).isoformat(),
-                )
-                self._decision_log.append(
-                    target_type="retry_request",
-                    target_id=retry_request_id,
-                    decision="execute-approved-retry",
-                    rationale=f"submitted {submitted.job_id}",
-                    actor=self._actor,
-                    conn=conn,
-                )
-                return updated
-        if unexpected_exc is not None:
-            raise unexpected_exc.with_traceback(unexpected_tb)
+    def _mark_failed(self, retry_request_id: str, error_text: str) -> RetryRequestRecord:
+        with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return self._retry_registry.mark_failed_in_connection(
+                conn,
+                retry_request_id,
+                error_text=error_text,
+            )
 
     @staticmethod
     def _validate_retry_context(

@@ -108,6 +108,53 @@ def test_execute_retry_marks_request_submitted_and_logs_decision(tmp_path: Path)
     assert decisions[-1].rationale == "submitted job_retry"
 
 
+def test_execute_retry_allows_submitter_that_writes_runs_and_jobs(tmp_path: Path) -> None:
+    db_path, _, _, _, request = _create_retry_fixture(tmp_path)
+    created: dict[str, str] = {}
+
+    def db_writing_submitter(**kwargs):
+        registry = RunRegistry(db_path)
+        submitted_run = registry.create_run(
+            RunCreateRequest(
+                run_kind=kwargs["run_kind"],
+                project=kwargs["project"],
+                notes=kwargs["notes"],
+            )
+        )
+        submitted_job = registry.create_job(
+            run_id=submitted_run.run_id,
+            backend="pbs",
+            queue=kwargs["queue"],
+            walltime=kwargs["walltime"],
+            filesystems="eagle",
+            select_expr="1:system=polaris",
+            place_expr="scatter",
+            submit_script_path="/eagle/demo/jobs/retry/submit.pbs",
+            stdout_path="/eagle/demo/runs/retry/stdout.log",
+            stderr_path="/eagle/demo/runs/retry/stderr.log",
+            pbs_job_id="789.polaris",
+        )
+        created["run_id"] = submitted_run.run_id
+        created["job_id"] = submitted_job.job_id
+        return FakeSubmitted(submitted_run.run_id, submitted_job.job_id, "789.polaris")
+
+    executor = RetryExecutor(
+        db_path=db_path,
+        policy=_retry_policy(),
+        submitter=db_writing_submitter,
+        actor="operator",
+    )
+
+    updated = executor.execute(request.retry_request_id)
+
+    assert updated.execution_status == "SUBMITTED"
+    assert updated.result_run_id == created["run_id"]
+    assert updated.result_job_id == created["job_id"]
+    assert updated.result_pbs_job_id == "789.polaris"
+    decisions = DecisionLog(db_path).list_for_target("retry_request", request.retry_request_id)
+    assert len(decisions) == 1
+
+
 def test_execute_retry_blocks_duplicate_execution_before_second_submitter_call(tmp_path: Path) -> None:
     db_path, _, _, _, request = _create_retry_fixture(tmp_path)
     first_entered = threading.Event()
