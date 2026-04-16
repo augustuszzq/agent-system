@@ -12,6 +12,7 @@ from autoresearch.bridge.remote_exec import (
 )
 from autoresearch.bridge.remote_fs import bootstrap_remote_root
 from autoresearch.bridge.ssh_master import SSHMasterClient
+from autoresearch.decisions import DecisionLog
 from autoresearch.db import connect_db, init_db
 from autoresearch.incidents.classifier import classify_incident
 from autoresearch.incidents.fetch import IncidentFetchError, collect_incident_evidence
@@ -25,6 +26,9 @@ from autoresearch.executor.pbs import (
 )
 from autoresearch.executor.polaris import build_polaris_job_request
 from autoresearch.executor.probe_submit import submit_live_probe_run
+from autoresearch.retries.executor import RetryExecutor
+from autoresearch.retries.policy import RetryPolicy
+from autoresearch.retries.registry import RetryRequestRegistry
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import CommandResult, RunCreateRequest
 from autoresearch.settings import ProbeSettings, load_settings
@@ -37,6 +41,7 @@ job_app = typer.Typer(help="Job helpers.")
 bridge_app = typer.Typer(help="ALCF bridge commands.")
 remote_app = typer.Typer(help="Remote environment commands.")
 incident_app = typer.Typer(help="Incident triage commands.")
+retry_app = typer.Typer(help="Retry commands.")
 
 app.add_typer(db_app, name="db")
 app.add_typer(run_app, name="run")
@@ -44,6 +49,7 @@ app.add_typer(job_app, name="job")
 app.add_typer(bridge_app, name="bridge")
 app.add_typer(remote_app, name="remote")
 app.add_typer(incident_app, name="incident")
+app.add_typer(retry_app, name="retry")
 
 
 @db_app.command("init")
@@ -162,6 +168,19 @@ def _fail_remote_bridge_error(error: RemoteBridgeError) -> None:
     raise typer.Exit(code=1)
 
 
+def _fail_cli_error(message: str) -> None:
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1)
+
+
+def _format_retry_request_row(record) -> str:
+    result_job_id = record.result_job_id or "-"
+    return (
+        f"{record.retry_request_id}\t{record.incident_id}\t{record.requested_action}\t"
+        f"{record.approval_status}\t{record.execution_status}\t{result_job_id}\t{record.updated_at}"
+    )
+
+
 def _resolve_probe_settings(
     settings,
     *,
@@ -259,6 +278,122 @@ def run_remote_bootstrap(force: bool) -> None:
         bootstrap_remote_root(service, settings.remote_root, force=force)
     except RemoteBridgeError as error:
         _fail_remote_bridge_error(error)
+
+
+@retry_app.command("request")
+def request_retry(
+    incident_id: str = typer.Option(..., "--incident-id"),
+) -> None:
+    settings = load_settings()
+    incident_registry = IncidentRegistry(settings.paths.db_path)
+    retry_registry = RetryRequestRegistry(settings.paths.db_path)
+    policy = RetryPolicy(settings.retry_policy)
+
+    try:
+        incident = incident_registry.get_incident(incident_id)
+    except KeyError as error:
+        _fail_cli_error(str(error))
+
+    if incident.status != "OPEN":
+        _fail_cli_error(f"incident {incident_id} is not open")
+    if not policy.allows(category=incident.category, action="RETRY_SAME_CONFIG"):
+        _fail_cli_error(f"incident {incident_id} category {incident.category} is not retry-eligible")
+    if retry_registry.find_active_request(incident_id, "RETRY_SAME_CONFIG") is not None:
+        _fail_cli_error(f"active retry request already exists for incident {incident_id}")
+    if incident.run_id is None or incident.job_id is None:
+        _fail_cli_error(f"incident {incident_id} is missing run/job linkage")
+
+    run_registry = RunRegistry(settings.paths.db_path)
+    try:
+        source_run = run_registry.get_run(incident.run_id)
+        source_job = run_registry.get_job(incident.job_id)
+    except KeyError as error:
+        _fail_cli_error(str(error))
+
+    record = retry_registry.create_request(
+        incident_id=incident.incident_id,
+        source_run_id=source_run.run_id,
+        source_job_id=source_job.job_id,
+        source_pbs_job_id=source_job.pbs_job_id,
+        requested_action="RETRY_SAME_CONFIG",
+    )
+    typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{incident.category}")
+
+
+@retry_app.command("list")
+def list_retry_requests() -> None:
+    settings = load_settings()
+    retry_registry = RetryRequestRegistry(settings.paths.db_path)
+    for record in retry_registry.list_requests():
+        typer.echo(_format_retry_request_row(record))
+
+
+@retry_app.command("approve")
+def approve_retry(
+    retry_request_id: str = typer.Option(..., "--retry-request-id"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    settings = load_settings()
+    retry_registry = RetryRequestRegistry(settings.paths.db_path)
+    decision_log = DecisionLog(settings.paths.db_path)
+    try:
+        record = retry_registry.approve(retry_request_id, actor="operator", reason=reason)
+    except (KeyError, ValueError) as error:
+        _fail_cli_error(str(error))
+    decision_log.append(
+        target_type="retry_request",
+        target_id=record.retry_request_id,
+        decision="approve-retry",
+        rationale=reason,
+        actor="operator",
+    )
+    typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{record.execution_status}")
+
+
+@retry_app.command("reject")
+def reject_retry(
+    retry_request_id: str = typer.Option(..., "--retry-request-id"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    settings = load_settings()
+    retry_registry = RetryRequestRegistry(settings.paths.db_path)
+    decision_log = DecisionLog(settings.paths.db_path)
+    try:
+        record = retry_registry.reject(retry_request_id, actor="operator", reason=reason)
+    except (KeyError, ValueError) as error:
+        _fail_cli_error(str(error))
+    decision_log.append(
+        target_type="retry_request",
+        target_id=record.retry_request_id,
+        decision="reject-retry",
+        rationale=reason,
+        actor="operator",
+    )
+    typer.echo(f"{record.retry_request_id}\t{record.approval_status}\t{record.execution_status}")
+
+
+@retry_app.command("execute")
+def execute_retry(
+    retry_request_id: str = typer.Option(..., "--retry-request-id"),
+) -> None:
+    settings = load_settings()
+    executor = RetryExecutor(
+        db_path=settings.paths.db_path,
+        policy=RetryPolicy(settings.retry_policy),
+        actor="operator",
+        submitter=lambda **kwargs: submit_live_probe_run(
+            settings=settings,
+            service=build_bridge_service(),
+            **kwargs,
+        ),
+    )
+    try:
+        record = executor.execute(retry_request_id)
+    except (RemoteBridgeError, KeyError, ValueError) as error:
+        _fail_cli_error(str(error))
+    typer.echo(
+        f"{record.retry_request_id}\t{record.result_run_id}\t{record.result_job_id}\t{record.result_pbs_job_id}"
+    )
 
 
 @incident_app.command("scan")

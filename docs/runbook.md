@@ -87,3 +87,30 @@ Expected operator-visible cases:
   - the command wrapper reports that the `ssh` executable is not available
 
 If the bridge becomes detached or stale, the control plane should stop at the bridge boundary. Do not attempt to automate MFA recovery.
+
+## Phase 4B safe retry workflow
+
+Use the retry commands from the repo root:
+
+```bash
+python -m autoresearch.cli retry request --incident-id <incident_id>
+python -m autoresearch.cli retry list
+python -m autoresearch.cli retry approve --retry-request-id <retry_request_id> --reason "filesystem recovered"
+python -m autoresearch.cli retry reject --retry-request-id <retry_request_id> --reason "not safe to retry"
+python -m autoresearch.cli retry execute --retry-request-id <retry_request_id>
+```
+
+Command behavior:
+
+1. `retry request --incident-id <incident_id>`
+   Creates a retry request only when the incident exists, is `OPEN`, and its category is allowed by `conf/retry_policy.yaml`. The current policy only permits `FILESYSTEM_UNAVAILABLE` and `RETRY_SAME_CONFIG`.
+2. `retry list`
+   Prints the current retry-request registry view, including request state, execution state, and any resulting job id.
+3. `retry approve --retry-request-id <retry_request_id> --reason "..."`
+   Marks a pending request `APPROVED`, stores the operator reason, and appends an approval decision row.
+4. `retry reject --retry-request-id <retry_request_id> --reason "..."`
+   Marks a pending request `REJECTED`, stores the operator reason, and appends a rejection decision row.
+5. `retry execute --retry-request-id <retry_request_id>`
+   Submits an approved request through the same live probe submission helper used by `job submit-probe`, but as a fresh `probe-retry` run and job. Successful execution writes the new run/job/PBS ids back onto the retry request and appends an execution decision row.
+
+If retry execution fails before a new PBS job is created, the retry request is marked `FAILED` and the last error is retained for audit.
