@@ -1,0 +1,3 @@
+rank 0 training step 200
+RuntimeError: CUDA out of memory while trying to allocate 1.00 GiB
+Killed
