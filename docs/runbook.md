@@ -41,6 +41,27 @@ Command behavior:
 6. `job poll --job-id <job_id>`
    Queries the live PBS job with real `qstat -fF JSON` and updates the local job record with the current probe state.
 
+## Phase 4A incident workflow
+
+Use the incident commands from the repo root:
+
+```bash
+python -m autoresearch.cli incident scan --job-id <job_id>
+python -m autoresearch.cli incident list
+python -m autoresearch.cli incident summarize
+```
+
+Command behavior:
+
+1. `incident scan --job-id <job_id>`
+   Collects incident evidence for the job, writes a snapshot under `state/incidents/<job_id>/<scan_ts>/`, then normalizes, classifies, and upserts the result into the incident registry.
+2. `incident list`
+   Prints the current open incidents.
+3. `incident summarize`
+   Prints a compact summary of open incidents.
+
+If the bridge is unavailable, detached, or stale, `incident scan` falls back to the newest local snapshot already stored for that job. Phase 4A does not auto-resolve incidents or retry scans.
+
 ## Local PBS executor commands
 
 Use the local PBS helpers from the repo root:
