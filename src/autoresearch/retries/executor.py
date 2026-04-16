@@ -32,6 +32,10 @@ class RetryExecutor:
             source_job = self._fetch_job(conn, request.source_job_id)
             self._validate_retry_context(request, incident, source_run, source_job)
 
+            if incident["status"] != "OPEN":
+                raise ValueError("retry request source incident must be open")
+            if source_run["run_kind"] != "probe":
+                raise ValueError("only probe runs are retryable in phase4b")
             if not self._policy.allows(category=incident["category"], action=request.requested_action):
                 raise ValueError("retry request category is not eligible")
 

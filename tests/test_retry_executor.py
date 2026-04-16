@@ -70,6 +70,21 @@ def _retry_policy() -> RetryPolicy:
     )
 
 
+def _resolve_incident(db_path: Path, incident_id: str) -> None:
+    from autoresearch.db import connect_db
+
+    with connect_db(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE incidents
+            SET status = 'RESOLVED',
+                resolved_at = '2026-04-16T00:00:00+00:00'
+            WHERE incident_id = ?
+            """,
+            (incident_id,),
+        )
+
+
 def test_execute_retry_marks_request_submitted_and_logs_decision(tmp_path: Path) -> None:
     db_path, _, _, _, request = _create_retry_fixture(tmp_path)
 
@@ -170,6 +185,76 @@ def test_execute_retry_marks_request_failed_for_remote_bridge_errors(tmp_path: P
     assert updated.last_error == "bridge detached"
     assert updated.result_job_id is None
     assert updated.attempt_count == 0
+
+
+def test_execute_retry_rejects_closed_incidents_before_submit(tmp_path: Path) -> None:
+    db_path, _, _, incident, request = _create_retry_fixture(tmp_path)
+    _resolve_incident(db_path, incident.incident_id)
+
+    submitter_called = threading.Event()
+
+    executor = RetryExecutor(
+        db_path=db_path,
+        policy=_retry_policy(),
+        submitter=lambda **kwargs: submitter_called.set(),
+        actor="operator",
+    )
+
+    with pytest.raises(ValueError, match="source incident must be open"):
+        executor.execute(request.retry_request_id)
+
+    assert not submitter_called.is_set()
+
+
+def test_execute_retry_rejects_non_probe_source_runs_before_submit(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    run_registry = RunRegistry(db_path)
+    run = run_registry.create_run(RunCreateRequest(run_kind="analysis", project="ALCF_PROJECT"))
+    job = run_registry.create_job(
+        run_id=run.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/eagle/demo/jobs/source/submit.pbs",
+        stdout_path="/eagle/demo/runs/source/stdout.log",
+        stderr_path="/eagle/demo/runs/source/stderr.log",
+        pbs_job_id="123.polaris",
+    )
+    incident = IncidentRegistry(db_path).upsert_incident(
+        run_id=run.run_id,
+        job_id=job.job_id,
+        severity="CRITICAL",
+        category="FILESYSTEM_UNAVAILABLE",
+        fingerprint="fs-down",
+        evidence={"matched_lines": ["filesystem unavailable"]},
+    )
+    retry_registry = RetryRequestRegistry(db_path)
+    request = retry_registry.create_request(
+        incident_id=incident.incident_id,
+        source_run_id=run.run_id,
+        source_job_id=job.job_id,
+        source_pbs_job_id=job.pbs_job_id,
+        requested_action="RETRY_SAME_CONFIG",
+    )
+    retry_registry.approve(request.retry_request_id, actor="operator", reason="filesystem recovered")
+
+    submitter_called = threading.Event()
+
+    executor = RetryExecutor(
+        db_path=db_path,
+        policy=_retry_policy(),
+        submitter=lambda **kwargs: submitter_called.set(),
+        actor="operator",
+    )
+
+    with pytest.raises(ValueError, match="only probe runs are retryable in phase4b"):
+        executor.execute(request.retry_request_id)
+
+    assert not submitter_called.is_set()
 
 
 def test_execute_retry_propagates_unexpected_submitter_errors(tmp_path: Path) -> None:
