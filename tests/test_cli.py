@@ -942,6 +942,42 @@ def test_retry_reject_and_list_show_rejected_request(tmp_path, monkeypatch) -> N
     assert [row.decision for row in decisions] == ["reject-retry"]
 
 
+def test_retry_list_shows_claimed_execution_status(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    incident_id, _, _ = _seed_retryable_incident(tmp_path)
+    request_result = runner.invoke(app, ["retry", "request", "--incident-id", incident_id])
+    assert request_result.exit_code == 0
+    retry_request_id = request_result.stdout.strip().split("\t")[0]
+
+    approve_result = runner.invoke(
+        app,
+        [
+            "retry",
+            "approve",
+            "--retry-request-id",
+            retry_request_id,
+            "--reason",
+            "filesystem recovered",
+        ],
+    )
+    assert approve_result.exit_code == 0
+
+    retry_registry = RetryRequestRegistry(tmp_path / "state" / "autoresearch.db")
+    with connect_db(tmp_path / "state" / "autoresearch.db") as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        claimed = retry_registry.claim_execution(conn, retry_request_id)
+
+    assert claimed.execution_status == "CLAIMED"
+
+    list_result = runner.invoke(app, ["retry", "list"])
+    row = list_result.stdout.strip().splitlines()[0].split("\t")
+    assert row[0] == retry_request_id
+    assert row[4] == "CLAIMED"
+
+
 def test_retry_request_surfaces_create_request_value_error_cleanly(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))

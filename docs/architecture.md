@@ -85,6 +85,13 @@ Phase 4B adds an operator-approved retry path on top of the incident registry an
 2. approve or reject the request explicitly
 3. execute an approved request through the same live probe submission helper used by `job submit-probe`
 
+Execution status is operator-visible and follows the claimed-state hardening:
+
+- `NOT_STARTED` means the request has been approved but no worker has begun execution yet
+- `CLAIMED` means execution has started and the worker has taken ownership, but local finalization has not completed yet
+- `SUBMITTED` means the new run/job/PBS ids were recorded successfully
+- `FAILED` means execution stopped before submission was finalized
+
 Implementation boundaries:
 
 - `src/autoresearch/retries/policy.py`
