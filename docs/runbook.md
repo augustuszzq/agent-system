@@ -114,3 +114,18 @@ Command behavior:
    Submits an approved request through the same live probe submission helper used by `job submit-probe`, but as a fresh `probe-retry` run and job. Successful execution writes the new run/job/PBS ids back onto the retry request and appends an execution decision row. While that work is in flight, the registry may briefly show `CLAIMED`.
 
 If retry execution fails before a new PBS job is created, the retry request is marked `FAILED` and the last error is retained for audit.
+
+## Phase 6A daily brief workflow
+
+Run the local daily report from the repo root:
+
+```bash
+python -m autoresearch.cli report daily
+```
+
+Command behavior:
+
+1. Builds a Markdown daily brief from the current SQLite state.
+2. Renders the fixed four sections: `Paper Delta`, `Run Status`, `Incident Summary`, and `Pending Decisions`.
+3. Keeps `Paper Delta` present with `not available yet` placeholders until paper radar exists.
+4. Prints the rendered brief to stdout and writes the same Markdown to `state/reports/daily/YYYY-MM-DD.md`.

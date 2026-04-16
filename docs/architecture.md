@@ -111,6 +111,31 @@ Implementation boundaries:
 
 Phase 4B intentionally stays narrow. It only supports `RETRY_SAME_CONFIG` for `FILESYSTEM_UNAVAILABLE`, it creates a fresh run and job for each execution, and it does not auto-retry or auto-resolve anything.
 
+## Phase 6A daily brief
+
+Phase 6A adds a local daily brief builder on top of the existing SQLite state. It is a report-only layer with no scheduler or timer in this phase.
+
+Implementation boundaries:
+
+- `src/autoresearch/reports/daily.py`
+  - builds the daily brief context from SQLite
+  - renders the Markdown brief
+  - writes the report to `state/reports/daily/YYYY-MM-DD.md`
+- `src/autoresearch/reports/templates/daily_brief.md.j2`
+  - defines the fixed four-section Markdown layout
+- `src/autoresearch/cli.py`
+  - exposes `python -m autoresearch.cli report daily`
+  - prints the rendered brief to stdout
+
+The first Phase 6A brief always renders the same four sections:
+
+1. `Paper Delta`
+2. `Run Status`
+3. `Incident Summary`
+4. `Pending Decisions`
+
+`Paper Delta` stays present even before paper radar exists. Its lines use explicit `not available yet` placeholders until that pipeline is implemented.
+
 ## Local foundation
 
 The local foundation owns:
