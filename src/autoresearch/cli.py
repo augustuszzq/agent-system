@@ -13,7 +13,7 @@ from autoresearch.bridge.remote_exec import (
 )
 from autoresearch.bridge.remote_fs import bootstrap_remote_root
 from autoresearch.bridge.ssh_master import SSHMasterClient
-from autoresearch.db import init_db
+from autoresearch.db import connect_db, init_db
 from autoresearch.incidents.classifier import classify_incident
 from autoresearch.incidents.fetch import IncidentFetchError, collect_incident_evidence
 from autoresearch.incidents.normalize import normalize_incident_evidence
@@ -363,12 +363,17 @@ def scan_incident(
         return
 
     incident_registry = IncidentRegistry(settings.paths.db_path)
-    was_open = any(
-        record.job_id == normalized.job_id
-        and record.category == classified.category
-        and record.fingerprint == classified.fingerprint
-        for record in incident_registry.list_open_incidents()
-    )
+    with connect_db(settings.paths.db_path) as conn:
+        existing_row = conn.execute(
+            """
+            SELECT 1
+            FROM incidents
+            WHERE job_id IS ? AND category = ? AND fingerprint IS ?
+            LIMIT 1
+            """,
+            (normalized.job_id, classified.category, classified.fingerprint),
+        ).fetchone()
+    was_existing = existing_row is not None
     evidence = {
         "scan_time": normalized.scan_time,
         "snapshot_dir": str(normalized.snapshot_dir),
@@ -386,7 +391,7 @@ def scan_incident(
         fingerprint=classified.fingerprint,
         evidence=evidence,
     )
-    action = "updated" if was_open else "created"
+    action = "updated" if was_existing else "created"
     typer.echo(f"{action.capitalize()} incident {record.incident_id} for job {job_id}")
 
 
