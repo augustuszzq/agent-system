@@ -44,6 +44,23 @@ class IncidentRegistry:
         self._db_path = db_path
         self._ensure_schema()
 
+    def get_incident(self, incident_id: str) -> IncidentRecord:
+        self._ensure_schema()
+        with connect_db(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT incident_id, run_id, job_id, severity, category,
+                       fingerprint, evidence_json, auto_action, status,
+                       created_at, updated_at, resolved_at
+                FROM incidents
+                WHERE incident_id = ?
+                """,
+                (incident_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"incident not found: {incident_id}")
+        return self._row_to_record(row)
+
     def upsert_incident(
         self,
         *,
