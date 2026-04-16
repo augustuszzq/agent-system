@@ -44,7 +44,7 @@ _PATH_ERROR_PATTERNS = (
     "cannot cd",
     "can't open file",
 )
-_RUNNING_LIKE_STATES = {"R", "E", "S"}
+_RUNNING_LIKE_STATES = {"R"}
 
 
 def classify_incident(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
@@ -389,15 +389,14 @@ def _strip_trivial_prefix(value: str) -> str:
 def _normalize_import_fingerprint(line: str) -> str:
     lower_line = _normalize_rule_fingerprint(line)
 
+    if "cannot import name" in lower_line:
+        return lower_line
+
     module_match = re.search(
         r"(?:no module named|cannot import name|module not found)\s+['\"]?([a-zA-Z0-9_.-]+)['\"]?",
         lower_line,
     )
     if module_match:
         return f"no module named {module_match.group(1)}"
-
-    import_match = re.search(r"importerror:.*?['\"]([a-zA-Z0-9_.-]+)['\"]", lower_line)
-    if import_match:
-        return f"no module named {import_match.group(1)}"
 
     return lower_line

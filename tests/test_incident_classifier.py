@@ -118,6 +118,16 @@ def test_classify_import_error_from_stdout_tail() -> None:
     assert result.fingerprint == "no module named demo_dependency"
 
 
+def test_classify_import_error_cannot_import_name_keeps_canonical_line() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="ImportError: cannot import name 'foo' from 'bar'\n")
+    )
+
+    assert result is not None
+    assert result.category == "ENV_IMPORT_ERROR"
+    assert result.fingerprint == "importerror: cannot import name 'foo' from 'bar'"
+
+
 def test_classify_nccl_failure_is_critical() -> None:
     result = classify_incident(
         _normalized(stderr_tail=_fixture_text("stderr_nccl_failure.log"))
@@ -238,6 +248,30 @@ def test_classify_no_heartbeat_requires_non_empty_stripped_output() -> None:
     assert result.category == "NO_HEARTBEAT"
     assert result.severity == "HIGH"
     assert result.fingerprint == "no-heartbeat"
+
+
+def test_classify_no_heartbeat_rejects_e_and_s_states() -> None:
+    e_state = classify_incident(
+        _normalized(
+            job_state="E",
+            stdout_tail="steady output",
+            current_log_tail_hash="same",
+            previous_log_tail_hash="same",
+        )
+    )
+    s_state = classify_incident(
+        _normalized(
+            job_state="S",
+            stdout_tail="steady output",
+            current_log_tail_hash="same",
+            previous_log_tail_hash="same",
+        )
+    )
+
+    assert e_state is not None
+    assert s_state is not None
+    assert e_state.category == "UNKNOWN"
+    assert s_state.category == "UNKNOWN"
 
 
 def test_classify_no_heartbeat_rejects_whitespace_only_output() -> None:
