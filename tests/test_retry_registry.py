@@ -24,6 +24,23 @@ def test_create_retry_request_persists_pending_row(tmp_path: Path) -> None:
     assert record.attempt_count == 0
 
 
+def test_get_and_list_requests_return_created_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RetryRequestRegistry(db_path)
+
+    created = registry.create_request(
+        incident_id="incident_demo",
+        source_run_id="run_demo",
+        source_job_id="job_demo",
+        source_pbs_job_id="123.polaris",
+        requested_action="RETRY_SAME_CONFIG",
+    )
+
+    assert registry.get(created.retry_request_id) == created
+    assert registry.list_requests() == [created]
+
+
 def test_reject_retry_request_requires_pending_and_stores_reason(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)
@@ -45,6 +62,29 @@ def test_reject_retry_request_requires_pending_and_stores_reason(tmp_path: Path)
 
     assert rejected.approval_status == "REJECTED"
     assert rejected.approval_reason == "not convinced"
+
+
+def test_create_retry_request_rejects_duplicate_active_request(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RetryRequestRegistry(db_path)
+
+    registry.create_request(
+        incident_id="incident_demo",
+        source_run_id="run_demo",
+        source_job_id="job_demo",
+        source_pbs_job_id="123.polaris",
+        requested_action="RETRY_SAME_CONFIG",
+    )
+
+    with pytest.raises(ValueError, match="already exists"):
+        registry.create_request(
+            incident_id="incident_demo",
+            source_run_id="run_demo_2",
+            source_job_id="job_demo_2",
+            source_pbs_job_id="456.polaris",
+            requested_action="RETRY_SAME_CONFIG",
+        )
 
 
 def test_approve_retry_request_requires_pending(tmp_path: Path) -> None:
@@ -85,4 +125,3 @@ def test_find_active_request_by_incident_and_action_ignores_failed_and_submitted
     )
 
     assert registry.find_active_request("incident_demo", "RETRY_SAME_CONFIG") is None
-

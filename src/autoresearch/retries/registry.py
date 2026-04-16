@@ -43,28 +43,33 @@ class RetryRequestRegistry:
         source_pbs_job_id: str | None,
         requested_action: RetryAction,
     ) -> RetryRequestRecord:
-        created_at = self._now_iso()
-        record = RetryRequestRecord(
-            retry_request_id=f"retry_{uuid.uuid4().hex[:12]}",
-            incident_id=incident_id,
-            source_run_id=source_run_id,
-            source_job_id=source_job_id,
-            source_pbs_job_id=source_pbs_job_id,
-            requested_action=requested_action,
-            approval_status="PENDING",
-            execution_status="NOT_STARTED",
-            attempt_count=0,
-            approved_by=None,
-            approval_reason=None,
-            last_error=None,
-            result_run_id=None,
-            result_job_id=None,
-            result_pbs_job_id=None,
-            created_at=created_at,
-            updated_at=created_at,
-            executed_at=None,
-        )
         with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = self._select_active_row(conn, incident_id, requested_action)
+            if existing is not None:
+                raise ValueError("retry request already exists")
+
+            created_at = self._now_iso()
+            record = RetryRequestRecord(
+                retry_request_id=f"retry_{uuid.uuid4().hex[:12]}",
+                incident_id=incident_id,
+                source_run_id=source_run_id,
+                source_job_id=source_job_id,
+                source_pbs_job_id=source_pbs_job_id,
+                requested_action=requested_action,
+                approval_status="PENDING",
+                execution_status="NOT_STARTED",
+                attempt_count=0,
+                approved_by=None,
+                approval_reason=None,
+                last_error=None,
+                result_run_id=None,
+                result_job_id=None,
+                result_pbs_job_id=None,
+                created_at=created_at,
+                updated_at=created_at,
+                executed_at=None,
+            )
             conn.execute(
                 """
                 INSERT INTO retry_requests (
@@ -165,26 +170,17 @@ class RetryRequestRegistry:
         return self._row_to_record(row)
 
     def approve(self, retry_request_id: str, *, actor: str, reason: str) -> RetryRequestRecord:
-        return self._update_decision(
-            retry_request_id,
-            actor=actor,
-            reason=reason,
-            approval_status="APPROVED",
-        )
+        return self._update_decision(retry_request_id, actor=actor, reason=reason, approval_status="APPROVED")
 
     def reject(self, retry_request_id: str, *, actor: str, reason: str) -> RetryRequestRecord:
-        return self._update_decision(
-            retry_request_id,
-            actor=actor,
-            reason=reason,
-            approval_status="REJECTED",
-        )
+        return self._update_decision(retry_request_id, actor=actor, reason=reason, approval_status="REJECTED")
 
     def mark_failed(self, retry_request_id: str, *, error_text: str) -> RetryRequestRecord:
-        updated_at = self._now_iso()
         with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             record = self._get_row_for_update(conn, retry_request_id)
             self._require_pending_execution(record)
+            updated_at = self._now_iso()
             conn.execute(
                 """
                 UPDATE retry_requests
@@ -219,10 +215,11 @@ class RetryRequestRegistry:
         result_pbs_job_id: str,
         executed_at: str,
     ) -> RetryRequestRecord:
-        updated_at = self._now_iso()
         with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             record = self._get_row_for_update(conn, retry_request_id)
             self._require_pending_execution(record)
+            updated_at = self._now_iso()
             conn.execute(
                 """
                 UPDATE retry_requests
@@ -269,10 +266,11 @@ class RetryRequestRegistry:
         reason: str,
         approval_status: str,
     ) -> RetryRequestRecord:
-        updated_at = self._now_iso()
         with connect_db(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             record = self._get_row_for_update(conn, retry_request_id)
             self._require_pending(record)
+            updated_at = self._now_iso()
             conn.execute(
                 """
                 UPDATE retry_requests
@@ -328,6 +326,32 @@ class RetryRequestRegistry:
             raise KeyError(f"retry request not found: {retry_request_id}")
         return row
 
+    def _select_active_row(
+        self, conn: sqlite3.Connection, incident_id: str, requested_action: RetryAction
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            """
+            SELECT retry_request_id, incident_id, source_run_id, source_job_id,
+                   source_pbs_job_id, requested_action, approval_status,
+                   execution_status, attempt_count, approved_by,
+                   approval_reason, last_error, result_run_id, result_job_id,
+                   result_pbs_job_id, created_at, updated_at, executed_at
+            FROM retry_requests
+            WHERE incident_id = ?
+              AND requested_action = ?
+              AND (
+                approval_status = 'PENDING'
+                OR (
+                  approval_status = 'APPROVED'
+                  AND execution_status = 'NOT_STARTED'
+                )
+              )
+            ORDER BY created_at ASC, retry_request_id ASC
+            LIMIT 1
+            """,
+            (incident_id, requested_action),
+        ).fetchone()
+
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> RetryRequestRecord:
         return RetryRequestRecord(
@@ -354,4 +378,3 @@ class RetryRequestRegistry:
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(UTC).isoformat(timespec="microseconds")
-
