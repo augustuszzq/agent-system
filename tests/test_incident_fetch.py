@@ -173,6 +173,49 @@ def test_collect_incident_evidence_raises_when_no_live_or_local_evidence(
         )
 
 
+def test_collect_incident_evidence_falls_back_to_local_snapshot_when_live_persistence_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents import fetch
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    scan_time = "2026-04-16T02:03:04+00:00"
+    existing_dir = incident_snapshot_dir(paths, job_record.job_id, scan_time)
+    existing_dir.mkdir(parents=True, exist_ok=True)
+    (existing_dir / "qstat.json").write_text(_fixture_text("qstat_running.json"), encoding="utf-8")
+    (existing_dir / "stdout.tail.log").write_text("cached stdout\n", encoding="utf-8")
+    (existing_dir / "stderr.tail.log").write_text("cached stderr\n", encoding="utf-8")
+
+    monkeypatch.setattr(fetch, "_scan_time_now", lambda: scan_time)
+
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
+    stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=_fixture_text("qstat_running.json")),
+            stdout_command: _command_result(stdout="live stdout\n"),
+            stderr_command: _command_result(stdout="live stderr\n"),
+        },
+    )
+
+    result = fetch.collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+    )
+
+    assert result.source == "local-fallback"
+    assert result.snapshot.snapshot_dir == existing_dir
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "cached stdout\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "cached stderr\n"
+    assert result.previous_snapshot is None
+
+
 def test_normalize_incident_evidence_parses_qstat_and_stabilizes_repeated_tail_hashes(
     tmp_path: Path,
 ) -> None:

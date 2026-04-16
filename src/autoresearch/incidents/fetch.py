@@ -72,13 +72,16 @@ def _fetch_live_snapshot(
     stdout_tail = _tail_remote_path(bridge_client, job_record.stdout_path, "stdout")
     stderr_tail = _tail_remote_path(bridge_client, job_record.stderr_path, "stderr")
 
-    snapshot_dir.mkdir(parents=True, exist_ok=False)
     qstat_json_path = snapshot_dir / "qstat.json"
     stdout_tail_path = snapshot_dir / "stdout.tail.log"
     stderr_tail_path = snapshot_dir / "stderr.tail.log"
-    qstat_json_path.write_text(qstat_result.stdout, encoding="utf-8")
-    stdout_tail_path.write_text(stdout_tail, encoding="utf-8")
-    stderr_tail_path.write_text(stderr_tail, encoding="utf-8")
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=False)
+        qstat_json_path.write_text(qstat_result.stdout, encoding="utf-8")
+        stdout_tail_path.write_text(stdout_tail, encoding="utf-8")
+        stderr_tail_path.write_text(stderr_tail, encoding="utf-8")
+    except OSError as exc:
+        raise IncidentFetchError(f"snapshot persistence failed: {snapshot_dir}") from exc
 
     return IncidentFetchResult(
         source="live",
