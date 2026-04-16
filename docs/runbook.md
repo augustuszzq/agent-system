@@ -54,7 +54,7 @@ python -m autoresearch.cli incident summarize
 Command behavior:
 
 1. `incident scan --job-id <job_id>`
-   Tries to collect fresh incident evidence for the job. When live capture succeeds, it writes a snapshot under `state/incidents/<job_id>/<scan_ts>/`, then normalizes, classifies, and upserts the result into the incident registry. Existing resolved incidents are updated in place and stay resolved; only new matches are created as `OPEN`.
+   Tries to collect fresh incident evidence for the job. When live capture succeeds, it writes a snapshot under `state/incidents/<job_id>/<scan_ts>/`, then normalizes, classifies, and upserts the result into the incident registry. Existing resolved incidents that are detected again are reopened and become visible in `OPEN` incident views again; only new matches are created as `OPEN`.
 2. `incident list`
    Prints the current open incidents.
 3. `incident summarize`

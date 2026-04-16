@@ -73,7 +73,7 @@ Phase 4A adds a manual, operator-triggered incident scan path:
 2. If the bridge is attached, attempt to fetch fresh `qstat -fF JSON` output plus stdout/stderr tails.
 3. When live capture succeeds, persist the evidence under `state/incidents/<job_id>/<scan_ts>/`.
 4. Normalize and classify the evidence deterministically.
-5. Upsert the matching incident by `job_id + category + fingerprint`; new matches are `OPEN`, while existing resolved rows stay in their existing status.
+5. Upsert the matching incident by `job_id + category + fingerprint`; new matches are `OPEN`, and repeat detection of a matching resolved incident reopens it so it becomes visible in `OPEN` incident views again.
 
 If the bridge is detached or stale, or if live capture or snapshot persistence fails, the scan falls back to the newest local snapshot already stored for that job. Phase 4A does not auto-resolve incidents and does not retry scans.
 
