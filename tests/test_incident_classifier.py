@@ -303,6 +303,25 @@ def test_classify_unknown_when_nonempty_evidence_has_no_specific_match() -> None
     assert result.severity == "MEDIUM"
 
 
+def test_classify_unknown_uses_stdout_only_evidence_for_fingerprint_and_matched_lines() -> None:
+    first = classify_incident(
+        _normalized(stdout_tail="stdout-only failure on worker-1\n")
+    )
+    second = classify_incident(
+        _normalized(stdout_tail="stdout-only failure on worker-2\n")
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.category == "UNKNOWN"
+    assert second.category == "UNKNOWN"
+    assert first.severity == "MEDIUM"
+    assert second.severity == "MEDIUM"
+    assert first.matched_lines == ("stdout-only failure on worker-1",)
+    assert second.matched_lines == ("stdout-only failure on worker-2",)
+    assert first.fingerprint != second.fingerprint
+
+
 def test_classify_path_error_matches_cannot_cd() -> None:
     result = classify_incident(
         _normalized(stderr_tail="bash: cannot cd /scratch/demo: No such file or directory\n")
