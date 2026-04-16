@@ -155,6 +155,47 @@ def test_execute_retry_allows_submitter_that_writes_runs_and_jobs(tmp_path: Path
     assert len(decisions) == 1
 
 
+def test_execute_retry_claims_request_before_blocking_submitter_returns(tmp_path: Path) -> None:
+    db_path, _, _, _, request = _create_retry_fixture(tmp_path)
+    submitter_entered = threading.Event()
+    release_submitter = threading.Event()
+    results: dict[str, object] = {}
+
+    def blocking_submitter(**kwargs):
+        submitter_entered.set()
+        if not release_submitter.wait(timeout=2):
+            raise AssertionError("blocking submitter was not released")
+        return FakeSubmitted("run_retry", "job_retry", "456.polaris")
+
+    executor = RetryExecutor(
+        db_path=db_path,
+        policy=_retry_policy(),
+        submitter=blocking_submitter,
+        actor="operator",
+    )
+
+    def run_execute() -> None:
+        try:
+            results["updated"] = executor.execute(request.retry_request_id)
+        except Exception as exc:  # noqa: BLE001 - capture unexpected thread failures for assertion
+            results["exc"] = exc
+
+    thread = threading.Thread(target=run_execute)
+    thread.start()
+    assert submitter_entered.wait(timeout=2)
+
+    claimed = RetryRequestRegistry(db_path).get(request.retry_request_id)
+    assert claimed.execution_status == "CLAIMED"
+    assert claimed.approval_status == "APPROVED"
+
+    release_submitter.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert "exc" not in results
+    assert results["updated"].execution_status == "SUBMITTED"
+
+
 def test_execute_retry_blocks_duplicate_execution_before_second_submitter_call(tmp_path: Path) -> None:
     db_path, _, _, _, request = _create_retry_fixture(tmp_path)
     first_entered = threading.Event()
@@ -198,6 +239,9 @@ def test_execute_retry_blocks_duplicate_execution_before_second_submitter_call(t
     second_thread = threading.Thread(target=run_second)
     first_thread.start()
     assert first_entered.wait(timeout=2)
+
+    claimed = RetryRequestRegistry(db_path).get(request.retry_request_id)
+    assert claimed.execution_status == "CLAIMED"
 
     second_thread.start()
     time.sleep(0.2)

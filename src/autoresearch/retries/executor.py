@@ -60,7 +60,7 @@ class RetryExecutor:
             if not self._policy.allows(category=incident["category"], action=request.requested_action):
                 raise ValueError("retry request category is not eligible")
 
-            self._retry_registry.claim_execution(conn, retry_request_id)
+            request = self._retry_registry.claim_execution(conn, retry_request_id)
             notes = (
                 f"source_incident={incident['incident_id']}\n"
                 f"source_job={source_job['job_id']}\n"
