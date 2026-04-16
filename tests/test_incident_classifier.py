@@ -148,6 +148,16 @@ def test_classify_nccl_failure_from_stdout_tail() -> None:
     assert result.severity == "CRITICAL"
 
 
+def test_classify_nccl_error_connection_closed_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="NCCL ERROR connection closed by remote peer\n")
+    )
+
+    assert result is not None
+    assert result.category == "NCCL_FAILURE"
+    assert result.severity == "CRITICAL"
+
+
 def test_classify_nccl_watchdog_timeout_is_critical() -> None:
     result = classify_incident(
         _normalized(stdout_tail="NCCL WARN Watchdog caught collective operation timeout after 600000 ms\n")
@@ -292,6 +302,16 @@ def test_classify_mpi_bootstrap_from_stdout_tail() -> None:
 def test_classify_mpi_launcher_failure_is_critical() -> None:
     result = classify_incident(
         _normalized(stdout_tail="launcher failed to start rank 0\n")
+    )
+
+    assert result is not None
+    assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_mpi_bootstrap_error_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="bootstrap error while launching ranks\n")
     )
 
     assert result is not None

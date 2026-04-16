@@ -211,6 +211,8 @@ def _is_mpi_bootstrap_line(line: str) -> bool:
         return _contains_any(line, ("failed", "fatal", "abort", "not found"))
     if "launcher" in line:
         return _contains_any(line, ("failed", "fatal", "abort", "error", "not found"))
+    if "bootstrap" in line and "error" in line:
+        return True
     if "bootstrap" not in line:
         return False
     return _contains_any(line, ("failed", "fatal", "not found", "abort"))
@@ -226,6 +228,11 @@ def _is_nccl_failure_line(line: str) -> bool:
     if "watchdog" in line and "timeout" in line:
         return True
     if "collective operation timeout" in line:
+        return True
+    if "error" in line and _contains_any(
+        line,
+        ("connection closed by remote peer", "connection closed", "watchdog", "timeout"),
+    ):
         return True
     return "warn" in line and _contains_any(
         line,
