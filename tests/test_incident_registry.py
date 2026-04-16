@@ -183,6 +183,57 @@ def test_upsert_incident_handles_mixed_naive_and_aware_scan_times(tmp_path: Path
     assert updated.updated_at == "2026-04-16T00:05:00+00:00"
 
 
+def test_upsert_incident_preserves_future_updated_at_when_reopening_stale_snapshot(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    created = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="HIGH",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:00:00+00:00",
+            "snapshot_dir": "/tmp/scan-a",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+
+    with connect_db(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE incidents
+            SET status = 'RESOLVED',
+                updated_at = '2099-01-01T00:00:00+00:00',
+                resolved_at = '2099-01-01T00:00:00+00:00'
+            WHERE incident_id = ?
+            """,
+            (created.incident_id,),
+        )
+
+    reopened = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="CRITICAL",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:05:00+00:00",
+            "snapshot_dir": "/tmp/scan-b",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+
+    assert reopened.status == "OPEN"
+    assert reopened.updated_at == "2099-01-01T00:00:00+00:00"
+
+
 def test_upsert_incident_reuses_existing_row_when_fingerprint_is_null(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)

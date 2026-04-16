@@ -205,7 +205,8 @@ class IncidentRegistry:
             return candidate if candidate > previous else previous
         if candidate_dt > previous_dt:
             return candidate
-        return datetime.now(UTC).isoformat(timespec="microseconds")
+        now = datetime.now(UTC).isoformat(timespec="microseconds")
+        return now if now > previous else previous
 
     @staticmethod
     def _normalized_iso_datetime(value: str) -> datetime:
