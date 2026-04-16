@@ -103,14 +103,14 @@ python -m autoresearch.cli retry execute --retry-request-id <retry_request_id>
 Command behavior:
 
 1. `retry request --incident-id <incident_id>`
-   Creates a retry request only when the incident exists, is `OPEN`, and its category is in `conf/retry_policy.yaml`. The first Phase 4B policy only allows `FILESYSTEM_UNAVAILABLE` and only supports `RETRY_SAME_CONFIG`.
+   Creates a retry request only when the incident exists, is `OPEN`, and its category is allowed by `conf/retry_policy.yaml`. The current policy only permits `FILESYSTEM_UNAVAILABLE` and `RETRY_SAME_CONFIG`.
 2. `retry list`
-   Prints the current retry-request registry view, including request state and any submitted result job id.
+   Prints the current retry-request registry view, including request state, execution state, and any resulting job id. `CLAIMED` means execution has started but local finalization has not completed yet. Phase 4B does not provide an automatic repair or resume command for `CLAIMED`; treat it as an operator-visible follow-up inspection state.
 3. `retry approve --retry-request-id <retry_request_id> --reason "..."`
-   Marks a pending request `APPROVED`, stores the operator reason, and appends an audit decision row.
+   Marks a pending request `APPROVED`, stores the operator reason, and appends an approval decision row.
 4. `retry reject --retry-request-id <retry_request_id> --reason "..."`
-   Marks a pending request `REJECTED`, stores the operator reason, and appends an audit decision row.
+   Marks a pending request `REJECTED`, stores the operator reason, and appends a rejection decision row.
 5. `retry execute --retry-request-id <retry_request_id>`
-   Submits an approved request through the same live probe submission path used by `job submit-probe`, but as a new `probe-retry` run and job. Successful execution writes the new run/job/PBS ids back onto the retry request and appends an audit decision row.
+   Submits an approved request through the same live probe submission helper used by `job submit-probe`, but as a fresh `probe-retry` run and job. Successful execution writes the new run/job/PBS ids back onto the retry request and appends an execution decision row. While that work is in flight, the registry may briefly show `CLAIMED`.
 
-If execution fails before a new PBS job is created, the retry request is marked `FAILED` and the last error is retained for audit. Phase 4B does not auto-retry the retry request itself.
+If retry execution fails before a new PBS job is created, the retry request is marked `FAILED` and the last error is retained for audit.

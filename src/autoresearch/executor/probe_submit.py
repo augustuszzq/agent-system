@@ -1,13 +1,15 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
 import tempfile
 
-from autoresearch.bridge.remote_exec import RemoteBridgeError, copy_to_remote, execute_remote_command
+from autoresearch.bridge.remote_exec import (
+    RemoteBridgeError,
+    copy_to_remote,
+    execute_remote_command,
+)
 from autoresearch.executor.pbs import build_qsub_command, parse_qsub_output, render_pbs_script
-from autoresearch.executor.polaris import build_probe_job_request
+from autoresearch.executor.polaris import build_polaris_job_request
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import RunCreateRequest
 
@@ -33,11 +35,11 @@ def submit_live_probe_run(
     run_record = registry.create_run(
         RunCreateRequest(run_kind=run_kind, project=project, notes=notes)
     )
-    request = build_probe_job_request(
+    request = build_polaris_job_request(
         run_id=run_record.run_id,
+        project=project,
         entrypoint_path=f"{settings.remote_root}/jobs/probe/entrypoint.sh",
         remote_root=settings.remote_root,
-        probe_settings=settings.probe,
         queue=queue,
         walltime=walltime,
     )
@@ -69,51 +71,53 @@ def submit_live_probe_run(
         temp_file.close()
 
     try:
-        submit_parent_dir = str(Path(request.submit_script_path).parent)
-        mkdir_result = execute_remote_command(
+        mkdir_submit = execute_remote_command(
             service,
-            f"mkdir -p {shlex.quote(submit_parent_dir)}",
+            f"mkdir -p {shlex.quote(str(Path(request.submit_script_path).parent))}",
         )
-        if mkdir_result.returncode != 0:
+        if mkdir_submit.returncode != 0:
             raise RemoteBridgeError(
-                mkdir_result.stderr.strip()
-                or f"failed to create submit directory: {submit_parent_dir}"
+                mkdir_submit.stderr.strip()
+                or f"failed to create submit directory: {Path(request.submit_script_path).parent}"
             )
-
-        copy_result = copy_to_remote(service, temp_path, request.submit_script_path, settings.remote_root)
+        copy_result = copy_to_remote(
+            service,
+            temp_path,
+            request.submit_script_path,
+            settings.remote_root,
+        )
         if copy_result.returncode != 0:
             raise RemoteBridgeError(
                 copy_result.stderr.strip()
                 or f"failed to upload submit script: {request.submit_script_path}"
             )
-
-        run_log_parent_dir = str(Path(request.stdout_path).parent)
-        mkdir_result = execute_remote_command(
+        mkdir_logs = execute_remote_command(
             service,
-            f"mkdir -p {shlex.quote(run_log_parent_dir)}",
+            f"mkdir -p {shlex.quote(str(Path(request.stdout_path).parent))}",
         )
-        if mkdir_result.returncode != 0:
+        if mkdir_logs.returncode != 0:
             raise RemoteBridgeError(
-                mkdir_result.stderr.strip()
-                or f"failed to create run log directory: {run_log_parent_dir}"
+                mkdir_logs.stderr.strip()
+                or f"failed to create run log directory: {Path(request.stdout_path).parent}"
             )
-
-        qsub_command = shlex.join(build_qsub_command(request.submit_script_path))
-        qsub_result = execute_remote_command(service, qsub_command)
+        qsub_result = execute_remote_command(
+            service,
+            shlex.join(build_qsub_command(request.submit_script_path)),
+        )
         if qsub_result.returncode != 0:
             raise RemoteBridgeError(
-                qsub_result.stderr.strip() or f"qsub failed with exit code {qsub_result.returncode}"
+                qsub_result.stderr.strip()
+                or f"qsub failed with exit code {qsub_result.returncode}"
             )
         try:
-            qsub_parse = parse_qsub_output(qsub_result.stdout)
+            parsed = parse_qsub_output(qsub_result.stdout)
         except ValueError as exc:
             raise RemoteBridgeError(str(exc)) from exc
-        registry.mark_job_submitted(job_record.job_id, qsub_parse.pbs_job_id)
+        registry.mark_job_submitted(job_record.job_id, parsed.pbs_job_id)
         return SubmittedProbeRun(
             run_id=run_record.run_id,
             job_id=job_record.job_id,
-            pbs_job_id=qsub_parse.pbs_job_id,
+            pbs_job_id=parsed.pbs_job_id,
         )
     finally:
         temp_path.unlink(missing_ok=True)
-

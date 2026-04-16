@@ -77,33 +77,39 @@ Phase 4A adds a manual, operator-triggered incident scan path:
 
 If the bridge is detached or stale, or if live capture or snapshot persistence fails, the scan falls back to the newest local snapshot already stored for that job. Phase 4A does not auto-resolve incidents and does not retry scans.
 
-## Phase 4B safe retry and approval
+## Phase 4B safe retry
 
-Phase 4B adds a narrow, operator-approved retry path on top of the incident registry:
+Phase 4B adds an operator-approved retry path on top of the incident registry and the live probe submission helper:
 
-1. create a retry request only for incidents that are `OPEN` and whitelisted by `conf/retry_policy.yaml`
-2. approve or reject the retry request explicitly
-3. execute an approved request through the same live Polaris probe submission path used by `job submit-probe`
+1. create a retry request only for `OPEN` incidents whose category is whitelisted in `conf/retry_policy.yaml`
+2. approve or reject the request explicitly
+3. execute an approved request through the same live probe submission helper used by `job submit-probe`
+
+Execution status is operator-visible and follows the claimed-state hardening:
+
+- `NOT_STARTED` means the request has been approved but no worker has begun execution yet
+- `CLAIMED` means execution has started and the worker has taken ownership, but local finalization has not completed yet
+- `SUBMITTED` means the new run/job/PBS ids were recorded successfully
+- `FAILED` means execution stopped before submission was finalized
 
 Implementation boundaries:
 
 - `src/autoresearch/retries/policy.py`
-  - evaluates whether a retry category and action are permitted by config
+  - evaluates whether a category and action are permitted by retry policy config
 - `src/autoresearch/retries/registry.py`
-  - persists retry requests and enforces approval/execution state transitions
+  - persists retry requests and enforces state transitions
 - `src/autoresearch/decisions.py`
-  - appends audit rows for retry approval, rejection, and execution
+  - appends audit rows for approval, rejection, and execution
 - `src/autoresearch/executor/probe_submit.py`
-  - owns the shared live probe submission helper reused by `job submit-probe` and `retry execute`
+  - centralizes the live Polaris probe submission path
 - `src/autoresearch/retries/executor.py`
-  - loads the source incident, run, and job
-  - validates that the request is executable
-  - submits the retry as a new probe run and job
-  - records the result ids back onto the retry request
+  - validates the source incident/run/job
+  - submits the new retry run and job
+  - records the resulting ids on the retry request
 - `src/autoresearch/cli.py`
   - exposes `retry request`, `retry list`, `retry approve`, `retry reject`, and `retry execute`
 
-Phase 4B stays conservative by design. It only supports `RETRY_SAME_CONFIG` for `FILESYSTEM_UNAVAILABLE` incidents and it creates a fresh run and job for each execution. It does not mutate the original experiment, retry arbitrary job kinds, or auto-execute pending requests.
+Phase 4B intentionally stays narrow. It only supports `RETRY_SAME_CONFIG` for `FILESYSTEM_UNAVAILABLE`, it creates a fresh run and job for each execution, and it does not auto-retry or auto-resolve anything.
 
 ## Local foundation
 

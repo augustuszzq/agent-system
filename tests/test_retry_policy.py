@@ -10,10 +10,7 @@ def test_retry_policy_accepts_whitelisted_category_and_action() -> None:
         )
     )
 
-    assert policy.allows(
-        category="FILESYSTEM_UNAVAILABLE",
-        action="RETRY_SAME_CONFIG",
-    )
+    assert policy.allows(category="FILESYSTEM_UNAVAILABLE", action="RETRY_SAME_CONFIG") is True
 
 
 def test_retry_policy_rejects_non_whitelisted_category() -> None:
@@ -24,5 +21,5 @@ def test_retry_policy_rejects_non_whitelisted_category() -> None:
         )
     )
 
-    assert not policy.allows(category="RESOURCE_OOM", action="RETRY_SAME_CONFIG")
+    assert policy.allows(category="RESOURCE_OOM", action="RETRY_SAME_CONFIG") is False
 

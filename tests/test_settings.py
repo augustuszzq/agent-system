@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from autoresearch.settings import load_settings
 
 
@@ -31,6 +33,24 @@ def _write_retry_policy(conf_dir: Path) -> None:
     )
 
 
+def _write_invalid_retry_policy(conf_dir: Path, *, category: str | None = None, action: str | None = None) -> None:
+    safe_retry_categories = ""
+    if category is not None:
+        safe_retry_categories = f"  - {category}\n"
+
+    allowed_actions = ""
+    if action is not None:
+        allowed_actions = f"  - {action}\n"
+
+    (conf_dir / "retry_policy.yaml").write_text(
+        "safe_retry_categories:\n"
+        f"{safe_retry_categories}"
+        "allowed_actions:\n"
+        f"{allowed_actions}",
+        encoding="utf-8",
+    )
+
+
 def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
     repo_root = tmp_path
     conf_dir = repo_root / "conf"
@@ -58,8 +78,64 @@ def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
     assert settings.bridge.server_alive_interval == 60
     assert settings.bridge.server_alive_count_max == 3
     assert settings.bridge.connect_timeout == 15
+
+
+def test_load_settings_reads_retry_policy(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    conf_dir = repo_root / "conf"
+    conf_dir.mkdir()
+    (conf_dir / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
+        encoding="utf-8",
+    )
+    _write_bridge_config(conf_dir)
+    _write_retry_policy(conf_dir)
+
+    settings = load_settings(repo_root=repo_root)
+
     assert settings.retry_policy.safe_retry_categories == ("FILESYSTEM_UNAVAILABLE",)
     assert settings.retry_policy.allowed_actions == ("RETRY_SAME_CONFIG",)
+
+
+@pytest.mark.parametrize(
+    ("category", "action", "message"),
+    [
+        ("NOT_A_CATEGORY", "RETRY_SAME_CONFIG", "safe_retry_categories contains invalid values"),
+        ("FILESYSTEM_UNAVAILABLE", "NOT_A_ACTION", "allowed_actions contains invalid values"),
+    ],
+)
+def test_load_settings_rejects_invalid_retry_policy_values(
+    tmp_path: Path,
+    category: str,
+    action: str,
+    message: str,
+) -> None:
+    repo_root = tmp_path
+    conf_dir = repo_root / "conf"
+    conf_dir.mkdir()
+    (conf_dir / "app.yaml").write_text(
+        "app_name: auto-research\n"
+        "paths:\n"
+        "  state_dir: state\n"
+        "  cache_dir: cache\n"
+        "  logs_dir: logs\n"
+        "  db_path: state/autoresearch.db\n"
+        "remote:\n"
+        "  root: /eagle/lc-mpi/Zhiqing/auto-research\n",
+        encoding="utf-8",
+    )
+    _write_bridge_config(conf_dir)
+    _write_invalid_retry_policy(conf_dir, category=category, action=action)
+
+    with pytest.raises(ValueError, match=message):
+        load_settings(repo_root=repo_root)
 
 
 def test_env_override_replaces_db_path(tmp_path: Path, monkeypatch) -> None:

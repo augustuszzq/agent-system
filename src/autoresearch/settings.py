@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import get_args
 
 import yaml
 
@@ -49,6 +50,41 @@ def _resolve_path(repo_root: Path, raw_path: str) -> Path:
     return repo_root / path
 
 
+def _validate_retry_policy_config(retry_policy_config: object) -> RetryPolicySettings:
+    if not isinstance(retry_policy_config, dict):
+        raise ValueError("conf/retry_policy.yaml must define a mapping")
+
+    safe_retry_categories = retry_policy_config.get("safe_retry_categories")
+    allowed_actions = retry_policy_config.get("allowed_actions")
+
+    if not isinstance(safe_retry_categories, list):
+        raise ValueError("conf/retry_policy.yaml safe_retry_categories must be a list")
+    if not isinstance(allowed_actions, list):
+        raise ValueError("conf/retry_policy.yaml allowed_actions must be a list")
+
+    valid_incident_categories = set(get_args(IncidentCategory))
+    valid_retry_actions = set(get_args(RetryAction))
+
+    invalid_categories = [value for value in safe_retry_categories if value not in valid_incident_categories]
+    if invalid_categories:
+        raise ValueError(
+            "conf/retry_policy.yaml safe_retry_categories contains invalid values: "
+            f"{', '.join(map(str, invalid_categories))}"
+        )
+
+    invalid_actions = [value for value in allowed_actions if value not in valid_retry_actions]
+    if invalid_actions:
+        raise ValueError(
+            "conf/retry_policy.yaml allowed_actions contains invalid values: "
+            f"{', '.join(map(str, invalid_actions))}"
+        )
+
+    return RetryPolicySettings(
+        safe_retry_categories=tuple(safe_retry_categories),
+        allowed_actions=tuple(allowed_actions),
+    )
+
+
 def resolve_repo_root(repo_root: Path | None = None) -> Path:
     explicit = os.getenv("AUTORESEARCH_REPO_ROOT")
     if explicit:
@@ -60,7 +96,9 @@ def load_settings(repo_root: Path | None = None) -> Settings:
     resolved_root = resolve_repo_root(repo_root=repo_root)
     app_config = yaml.safe_load((resolved_root / "conf" / "app.yaml").read_text(encoding="utf-8"))
     bridge_config = yaml.safe_load((resolved_root / "conf" / "polaris.yaml").read_text(encoding="utf-8"))
-    retry_policy_config = yaml.safe_load((resolved_root / "conf" / "retry_policy.yaml").read_text(encoding="utf-8"))
+    retry_policy_config = yaml.safe_load(
+        (resolved_root / "conf" / "retry_policy.yaml").read_text(encoding="utf-8")
+    )
 
     state_dir = _resolve_path(resolved_root, app_config["paths"]["state_dir"])
     cache_dir = _resolve_path(resolved_root, app_config["paths"]["cache_dir"])
@@ -95,8 +133,5 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             queue=bridge_config["probe"]["queue"],
             walltime=bridge_config["probe"]["walltime"],
         ),
-        retry_policy=RetryPolicySettings(
-            safe_retry_categories=tuple(retry_policy_config["safe_retry_categories"]),
-            allowed_actions=tuple(retry_policy_config["allowed_actions"]),
-        ),
+        retry_policy=_validate_retry_policy_config(retry_policy_config),
     )

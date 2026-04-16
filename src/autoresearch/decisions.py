@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,27 +30,42 @@ class DecisionLog:
         decision: str,
         rationale: str | None,
         actor: str,
+        conn: sqlite3.Connection | None = None,
     ) -> DecisionRecord:
         record = DecisionRecord(
             decision_id=f"decision_{uuid.uuid4().hex[:12]}",
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC).isoformat(timespec="microseconds"),
             target_type=target_type,
             target_id=target_id,
             decision=decision,
             rationale=rationale,
             actor=actor,
         )
-        with connect_db(self._db_path) as conn:
+        if conn is None:
+            with connect_db(self._db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO decisions (
+                        decision_id, created_at, target_type, target_id,
+                        decision, rationale, actor
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.decision_id,
+                        record.created_at,
+                        record.target_type,
+                        record.target_id,
+                        record.decision,
+                        record.rationale,
+                        record.actor,
+                    ),
+                )
+        else:
             conn.execute(
                 """
                 INSERT INTO decisions (
-                    decision_id,
-                    created_at,
-                    target_type,
-                    target_id,
-                    decision,
-                    rationale,
-                    actor
+                    decision_id, created_at, target_type, target_id,
+                    decision, rationale, actor
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -80,4 +93,3 @@ class DecisionLog:
                 (target_type, target_id),
             ).fetchall()
         return [DecisionRecord(**dict(row)) for row in rows]
-

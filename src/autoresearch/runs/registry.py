@@ -193,6 +193,20 @@ class RunRegistry:
             raise KeyError(f"job not found: {job_id}")
         return self._row_to_job_record(row)
 
+    def get_run(self, run_id: str) -> RunRecord:
+        with connect_db(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT run_id, run_kind, project, created_at, status, notes
+                FROM runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"run not found: {run_id}")
+        return self._row_to_record(row)
+
     def update_job_state(
         self,
         job_id: str,

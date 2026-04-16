@@ -21,6 +21,20 @@ def test_create_run_persists_initial_metadata(tmp_path: Path) -> None:
     assert record.run_id.startswith("run_")
 
 
+def test_get_run_returns_existing_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RunRegistry(db_path)
+
+    created = registry.create_run(
+        RunCreateRequest(run_kind="probe", project="demo", notes="hello")
+    )
+
+    record = registry.get_run(created.run_id)
+
+    assert record == created
+
+
 def test_list_runs_returns_newest_first(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)
