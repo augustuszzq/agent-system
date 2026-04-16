@@ -1,1 +1,4 @@
-safe_retry_categories: []
+safe_retry_categories:
+  - FILESYSTEM_UNAVAILABLE
+allowed_actions:
+  - RETRY_SAME_CONFIG

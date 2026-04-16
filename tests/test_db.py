@@ -25,6 +25,61 @@ def test_init_db_creates_core_tables(tmp_path: Path) -> None:
     assert {"runs", "jobs", "incidents", "decisions"} <= tables
 
 
+def test_init_db_creates_retry_requests_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+
+    init_db(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert "retry_requests" in tables
+
+
+def test_retry_requests_table_has_expected_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+
+    init_db(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(retry_requests)").fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert columns == {
+        "retry_request_id",
+        "incident_id",
+        "source_run_id",
+        "source_job_id",
+        "source_pbs_job_id",
+        "requested_action",
+        "approval_status",
+        "execution_status",
+        "attempt_count",
+        "approved_by",
+        "approval_reason",
+        "last_error",
+        "result_run_id",
+        "result_job_id",
+        "result_pbs_job_id",
+        "created_at",
+        "updated_at",
+        "executed_at",
+    }
+
+
 def test_connect_db_enables_wal(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
 

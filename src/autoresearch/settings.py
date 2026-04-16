@@ -1,10 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
 import yaml
 
 from autoresearch.paths import AppPaths
+from autoresearch.schemas import IncidentCategory, RetryAction
 
 
 @dataclass(frozen=True)
@@ -26,12 +27,24 @@ class ProbeSettings:
 
 
 @dataclass(frozen=True)
+class RetryPolicySettings:
+    safe_retry_categories: tuple[IncidentCategory, ...]
+    allowed_actions: tuple[RetryAction, ...]
+
+
+@dataclass(frozen=True)
 class Settings:
     app_name: str
     paths: AppPaths
     remote_root: str
     bridge: BridgeSettings
     probe: ProbeSettings
+    retry_policy: RetryPolicySettings = field(
+        default_factory=lambda: RetryPolicySettings(
+            safe_retry_categories=(),
+            allowed_actions=(),
+        )
+    )
 
 
 def _resolve_path(repo_root: Path, raw_path: str) -> Path:
@@ -52,6 +65,9 @@ def load_settings(repo_root: Path | None = None) -> Settings:
     resolved_root = resolve_repo_root(repo_root=repo_root)
     app_config = yaml.safe_load((resolved_root / "conf" / "app.yaml").read_text(encoding="utf-8"))
     bridge_config = yaml.safe_load((resolved_root / "conf" / "polaris.yaml").read_text(encoding="utf-8"))
+    retry_policy_config = yaml.safe_load(
+        (resolved_root / "conf" / "retry_policy.yaml").read_text(encoding="utf-8")
+    )
 
     state_dir = _resolve_path(resolved_root, app_config["paths"]["state_dir"])
     cache_dir = _resolve_path(resolved_root, app_config["paths"]["cache_dir"])
@@ -85,5 +101,9 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             project=bridge_config["probe"]["project"],
             queue=bridge_config["probe"]["queue"],
             walltime=bridge_config["probe"]["walltime"],
+        ),
+        retry_policy=RetryPolicySettings(
+            safe_retry_categories=tuple(retry_policy_config["safe_retry_categories"]),
+            allowed_actions=tuple(retry_policy_config["allowed_actions"]),
         ),
     )

@@ -17,6 +17,9 @@ IncidentCategory = Literal[
 ]
 IncidentSeverity = Literal["CRITICAL", "HIGH", "MEDIUM"]
 IncidentStatus = Literal["OPEN", "RESOLVED"]
+RetryAction = Literal["RETRY_SAME_CONFIG"]
+RetryApprovalStatus = Literal["PENDING", "APPROVED", "REJECTED"]
+RetryExecutionStatus = Literal["NOT_STARTED", "SUBMITTED", "FAILED"]
 
 
 @dataclass(frozen=True)
