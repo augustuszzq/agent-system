@@ -170,12 +170,7 @@ class IncidentRegistry:
 
         top_incidents = sorted(
             rows,
-            key=lambda record: (
-                _SEVERITY_ORDER.get(record.severity, len(_SEVERITY_ORDER)),
-                record.updated_at,
-                record.created_at,
-                record.incident_id,
-            ),
+            key=lambda record: _SEVERITY_ORDER.get(record.severity, len(_SEVERITY_ORDER)),
         )[:limit]
         return IncidentSummary(counts=counts, top_incidents=top_incidents)
 

@@ -171,3 +171,48 @@ def test_summarize_open_incidents_groups_by_category_and_severity(tmp_path: Path
     assert summary.counts["RESOURCE_OOM"] == 1
     assert summary.counts["ENV_IMPORT_ERROR"] == 1
     assert summary.top_incidents[0].job_id == "job_1"
+
+
+def test_summarize_open_incidents_preserves_newest_first_within_same_severity_bucket_and_limit(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    registry.upsert_incident(
+        run_id="run_1",
+        job_id="job_oldest",
+        severity="CRITICAL",
+        category="RESOURCE_OOM",
+        fingerprint="oom-1",
+        evidence={"scan_time": "2026-04-16T00:00:00+00:00", "snapshot_dir": "/tmp/a", "classifier_rule": "oom-line", "matched_lines": ["oldest"]},
+    )
+    registry.upsert_incident(
+        run_id="run_2",
+        job_id="job_middle",
+        severity="CRITICAL",
+        category="RESOURCE_OOM",
+        fingerprint="oom-2",
+        evidence={"scan_time": "2026-04-16T00:05:00+00:00", "snapshot_dir": "/tmp/b", "classifier_rule": "oom-line", "matched_lines": ["middle"]},
+    )
+    registry.upsert_incident(
+        run_id="run_3",
+        job_id="job_newest",
+        severity="CRITICAL",
+        category="RESOURCE_OOM",
+        fingerprint="oom-3",
+        evidence={"scan_time": "2026-04-16T00:10:00+00:00", "snapshot_dir": "/tmp/c", "classifier_rule": "oom-line", "matched_lines": ["newest"]},
+    )
+    registry.upsert_incident(
+        run_id="run_4",
+        job_id="job_high",
+        severity="HIGH",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="import",
+        evidence={"scan_time": "2026-04-16T00:15:00+00:00", "snapshot_dir": "/tmp/d", "classifier_rule": "import-error", "matched_lines": ["other"]},
+    )
+
+    summary = registry.summarize_open_incidents(limit=2)
+
+    assert [record.job_id for record in summary.top_incidents] == ["job_newest", "job_middle"]
