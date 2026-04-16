@@ -191,6 +191,15 @@ def test_collect_incident_evidence_falls_back_to_local_snapshot_when_live_persis
 
     monkeypatch.setattr(fetch, "_scan_time_now", lambda: scan_time)
 
+    original_write_text = Path.write_text
+
+    def fail_qstat_write(self: Path, data: str, *args, **kwargs) -> int:
+        if self.name == "qstat.json" and self.parent.name.startswith(scan_time):
+            raise OSError("disk full")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_qstat_write)
+
     qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
     stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
     stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
@@ -214,6 +223,52 @@ def test_collect_incident_evidence_falls_back_to_local_snapshot_when_live_persis
     assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "cached stdout\n"
     assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "cached stderr\n"
     assert result.previous_snapshot is None
+
+
+def test_collect_incident_evidence_persists_fresh_live_snapshot_when_same_second_repeats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents import fetch
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    scan_time = "2026-04-16T02:03:04+00:00"
+    existing_dir = incident_snapshot_dir(paths, job_record.job_id, scan_time)
+    existing_dir.mkdir(parents=True, exist_ok=True)
+    (existing_dir / "qstat.json").write_text(_fixture_text("qstat_running.json"), encoding="utf-8")
+    (existing_dir / "stdout.tail.log").write_text("cached stdout\n", encoding="utf-8")
+    (existing_dir / "stderr.tail.log").write_text("cached stderr\n", encoding="utf-8")
+
+    monkeypatch.setattr(fetch, "_scan_time_now", lambda: scan_time)
+
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
+    stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=_fixture_text("qstat_running.json")),
+            stdout_command: _command_result(stdout="fresh stdout\n"),
+            stderr_command: _command_result(stdout="fresh stderr\n"),
+        },
+    )
+
+    result = fetch.collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+    )
+
+    assert result.source == "live"
+    assert result.snapshot.scan_time != scan_time
+    assert result.snapshot.scan_time.startswith(f"{scan_time}--")
+    assert result.snapshot.snapshot_dir != existing_dir
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "fresh stdout\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "fresh stderr\n"
+    assert result.previous_snapshot is not None
+    assert result.previous_snapshot.snapshot_dir == existing_dir
 
 
 def test_normalize_incident_evidence_parses_qstat_and_stabilizes_repeated_tail_hashes(
@@ -262,3 +317,27 @@ def test_normalize_incident_evidence_parses_qstat_and_stabilizes_repeated_tail_h
     assert normalized.scan_time == "2026-04-16T02:03:04+00:00"
     assert normalized.current_log_tail_hash == expected_hash
     assert normalized.previous_log_tail_hash == expected_hash
+
+
+def test_normalize_incident_evidence_raises_controlled_error_for_malformed_snapshot(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.incidents.fetch import collect_incident_evidence
+    from autoresearch.incidents.normalize import IncidentNormalizationError, normalize_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    scan_dir = incident_snapshot_dir(paths, job_record.job_id, "2026-04-16T02:03:04+00:00")
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    (scan_dir / "qstat.json").write_text("{not-json", encoding="utf-8")
+    (scan_dir / "stdout.tail.log").write_text("stdout\n", encoding="utf-8")
+    (scan_dir / "stderr.tail.log").write_text("stderr\n", encoding="utf-8")
+
+    fetched = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=FakeBridgeClient(state="DETACHED"),
+    )
+
+    with pytest.raises(IncidentNormalizationError, match="incident snapshot normalization failed"):
+        normalize_incident_evidence(job_record=job_record, fetched=fetched)

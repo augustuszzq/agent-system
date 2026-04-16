@@ -61,8 +61,9 @@ def _fetch_live_snapshot(
         raise IncidentFetchError(f"job {job_record.job_id} has no PBS job id")
 
     scan_time = _scan_time_now()
-    snapshot_dir = incident_snapshot_dir(paths, job_record.job_id, scan_time)
     previous_snapshot = _latest_snapshot(paths, job_record.job_id)
+    scan_time = _allocate_snapshot_scan_time(paths, job_record.job_id, scan_time)
+    snapshot_dir = incident_snapshot_dir(paths, job_record.job_id, scan_time)
 
     qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id))
     qstat_result = bridge_client.exec(qstat_command)
@@ -109,6 +110,16 @@ def _tail_remote_path(bridge_client: _BridgeClient, remote_path: str | None, lab
 
 def _scan_time_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _allocate_snapshot_scan_time(paths: AppPaths, job_id: str, base_scan_time: str) -> str:
+    root = incident_state_dir(paths, job_id)
+    candidate = base_scan_time
+    suffix = 1
+    while incident_snapshot_dir(paths, job_id, candidate).exists():
+        candidate = f"{base_scan_time}--{suffix:04d}"
+        suffix += 1
+    return candidate
 
 
 def _latest_snapshot(paths: AppPaths, job_id: str) -> IncidentSnapshotRef | None:

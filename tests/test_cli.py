@@ -605,6 +605,52 @@ def test_incident_scan_reports_fetch_errors_to_stderr(tmp_path, monkeypatch) -> 
     assert "fetch failed" in result.stderr
 
 
+def test_incident_scan_reports_malformed_snapshot_as_cli_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    run_registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    run_record = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    job_record = run_registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+
+    fake_snapshot_dir = tmp_path / "state" / "incidents" / job_record.job_id / "2026-04-16T12:00:00"
+    fake_snapshot_dir.mkdir(parents=True)
+    fake_snapshot = IncidentSnapshotRef(
+        scan_time="2026-04-16T12:00:00",
+        snapshot_dir=fake_snapshot_dir,
+        qstat_json_path=fake_snapshot_dir / "qstat.json",
+        stdout_tail_path=fake_snapshot_dir / "stdout.tail.log",
+        stderr_tail_path=fake_snapshot_dir / "stderr.tail.log",
+    )
+    fake_snapshot.qstat_json_path.write_text("{not-json", encoding="utf-8")
+    fake_snapshot.stdout_tail_path.write_text("stdout tail", encoding="utf-8")
+    fake_snapshot.stderr_tail_path.write_text("stderr tail", encoding="utf-8")
+    fake_fetched = IncidentFetchResult(source="local-fallback", snapshot=fake_snapshot, previous_snapshot=None)
+
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: FakeBridgeService())
+    monkeypatch.setattr(cli_module, "collect_incident_evidence", lambda paths, job, bridge: fake_fetched)
+
+    result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
+
+    assert result.exit_code == 1
+    assert "incident snapshot normalization failed" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_incident_scan_reports_unknown_job_as_cli_failure(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))

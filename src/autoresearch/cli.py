@@ -16,7 +16,7 @@ from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import connect_db, init_db
 from autoresearch.incidents.classifier import classify_incident
 from autoresearch.incidents.fetch import IncidentFetchError, collect_incident_evidence
-from autoresearch.incidents.normalize import normalize_incident_evidence
+from autoresearch.incidents.normalize import IncidentNormalizationError, normalize_incident_evidence
 from autoresearch.incidents.registry import IncidentRegistry
 from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
 from autoresearch.executor.pbs import (
@@ -360,7 +360,11 @@ def scan_incident(
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
 
-    normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
+    try:
+        normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
+    except IncidentNormalizationError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
     classified = classify_incident(normalized)
     if classified is None:
         typer.echo(f"No incident detected for job {job_id}.")
