@@ -9,7 +9,7 @@ from autoresearch.bridge.remote_exec import (
     execute_remote_command,
 )
 from autoresearch.executor.pbs import build_qsub_command, parse_qsub_output, render_pbs_script
-from autoresearch.executor.polaris import build_probe_job_request
+from autoresearch.executor.polaris import build_polaris_job_request
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import RunCreateRequest
 
@@ -35,11 +35,11 @@ def submit_live_probe_run(
     run_record = registry.create_run(
         RunCreateRequest(run_kind=run_kind, project=project, notes=notes)
     )
-    request = build_probe_job_request(
+    request = build_polaris_job_request(
         run_id=run_record.run_id,
+        project=project,
         entrypoint_path=f"{settings.remote_root}/jobs/probe/entrypoint.sh",
         remote_root=settings.remote_root,
-        probe_settings=settings.probe,
         queue=queue,
         walltime=walltime,
     )

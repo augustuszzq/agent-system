@@ -5,6 +5,7 @@ import pytest
 
 from autoresearch import cli as cli_module
 from autoresearch.bridge.remote_exec import RemoteBridgeError
+from autoresearch.executor import probe_submit as probe_submit_module
 from autoresearch.executor.probe_submit import submit_live_probe_run
 from autoresearch.executor.pbs import build_qstat_command, build_qsub_command
 from autoresearch.executor.polaris import build_probe_job_request
@@ -263,6 +264,41 @@ def test_submit_live_probe_run_supports_custom_run_kind_and_notes(
     assert run_record.run_kind == "probe-retry"
     assert run_record.notes == "retry_request=retry_123"
     assert job_record.state == "SUBMITTED"
+
+
+def test_submit_live_probe_run_preserves_project_override_in_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.paths.db_path)
+    service = ProbeBridgeService(
+        qsub_output="123456.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov",
+    )
+    captured: dict[str, str] = {}
+    original_builder = probe_submit_module.build_polaris_job_request
+
+    def fake_build_polaris_job_request(**kwargs):
+        captured["project"] = kwargs["project"]
+        return original_builder(**kwargs)
+
+    monkeypatch.setattr(
+        probe_submit_module,
+        "build_polaris_job_request",
+        fake_build_polaris_job_request,
+    )
+
+    submit_live_probe_run(
+        settings=settings,
+        service=service,
+        run_kind="probe",
+        notes=None,
+        project="CUSTOM_PROJECT",
+        queue="debug",
+        walltime="00:10:00",
+    )
+
+    assert captured["project"] == "CUSTOM_PROJECT"
 
 
 def test_job_submit_probe_reuses_shared_submit_helper(
