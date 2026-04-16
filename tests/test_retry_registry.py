@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from autoresearch.db import init_db
+from autoresearch.db import connect_db
 from autoresearch.retries.registry import RetryRequestRegistry
 
 
@@ -104,6 +105,73 @@ def test_approve_retry_request_requires_pending(tmp_path: Path) -> None:
         registry.approve(record.retry_request_id, actor="operator", reason="again")
 
 
+def test_claim_execution_sets_claimed_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RetryRequestRegistry(db_path)
+    record = registry.create_request(
+        incident_id="incident_demo",
+        source_run_id="run_demo",
+        source_job_id="job_demo",
+        source_pbs_job_id="123.polaris",
+        requested_action="RETRY_SAME_CONFIG",
+    )
+    registry.approve(record.retry_request_id, actor="operator", reason="ok")
+
+    with connect_db(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        claimed = registry.claim_execution(conn, record.retry_request_id)
+
+    assert claimed.execution_status == "CLAIMED"
+    assert registry.get(record.retry_request_id).execution_status == "CLAIMED"
+
+
+def test_mark_submitted_requires_claimed_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RetryRequestRegistry(db_path)
+    record = registry.create_request(
+        incident_id="incident_demo",
+        source_run_id="run_demo",
+        source_job_id="job_demo",
+        source_pbs_job_id="123.polaris",
+        requested_action="RETRY_SAME_CONFIG",
+    )
+    registry.approve(record.retry_request_id, actor="operator", reason="ok")
+
+    with pytest.raises(ValueError, match="claimed"):
+        registry.mark_submitted(
+            record.retry_request_id,
+            result_run_id="run_retry",
+            result_job_id="job_retry",
+            result_pbs_job_id="456.polaris",
+            executed_at="2026-04-16T00:00:00+00:00",
+        )
+
+
+def test_find_active_request_includes_claimed_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = RetryRequestRegistry(db_path)
+    record = registry.create_request(
+        incident_id="incident_demo",
+        source_run_id="run_demo",
+        source_job_id="job_demo",
+        source_pbs_job_id="123.polaris",
+        requested_action="RETRY_SAME_CONFIG",
+    )
+    registry.approve(record.retry_request_id, actor="operator", reason="ok")
+
+    with connect_db(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        registry.claim_execution(conn, record.retry_request_id)
+
+    active = registry.find_active_request("incident_demo", "RETRY_SAME_CONFIG")
+
+    assert active is not None
+    assert active.execution_status == "CLAIMED"
+
+
 def test_find_active_request_by_incident_and_action_ignores_failed_and_submitted(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)
@@ -116,6 +184,11 @@ def test_find_active_request_by_incident_and_action_ignores_failed_and_submitted
         requested_action="RETRY_SAME_CONFIG",
     )
     registry.approve(first.retry_request_id, actor="operator", reason="ok")
+
+    with connect_db(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        registry.claim_execution(conn, first.retry_request_id)
+
     registry.mark_submitted(
         first.retry_request_id,
         result_run_id="run_retry",

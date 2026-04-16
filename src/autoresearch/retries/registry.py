@@ -158,7 +158,7 @@ class RetryRequestRegistry:
                     approval_status = 'PENDING'
                     OR (
                       approval_status = 'APPROVED'
-                      AND execution_status = 'NOT_STARTED'
+                      AND execution_status IN ('NOT_STARTED', 'CLAIMED')
                     )
                   )
                 ORDER BY created_at ASC, retry_request_id ASC
@@ -254,7 +254,7 @@ class RetryRequestRegistry:
                 updated_at = ?
             WHERE retry_request_id = ?
             """,
-            ("SUBMITTED", updated_at, retry_request_id),
+            ("CLAIMED", updated_at, retry_request_id),
         )
         row = conn.execute(
             """
@@ -277,9 +277,9 @@ class RetryRequestRegistry:
         record = self._get_row_for_update(conn, retry_request_id)
         if record["approval_status"] != "APPROVED" or record["execution_status"] not in {
             "NOT_STARTED",
-            "SUBMITTED",
+            "CLAIMED",
         }:
-            raise ValueError("retry request must be approved and not started")
+            raise ValueError("retry request must be approved and not started or claimed")
         updated_at = self._now_iso()
         conn.execute(
             """
@@ -317,29 +317,14 @@ class RetryRequestRegistry:
         executed_at: str,
     ) -> RetryRequestRecord:
         record = self._get_row_for_update(conn, retry_request_id)
-        if record["approval_status"] != "APPROVED" or record["execution_status"] not in {
-            "NOT_STARTED",
-            "SUBMITTED",
-        }:
-            raise ValueError("retry request must be approved and not started")
-        if record["execution_status"] == "NOT_STARTED":
-            conn.execute(
-                """
-                UPDATE retry_requests
-                SET execution_status = ?,
-                    updated_at = ?
-                WHERE retry_request_id = ?
-                """,
-                ("SUBMITTED", self._now_iso(), retry_request_id),
-            )
-            record = self._get_row_for_update(conn, retry_request_id)
-        if record["execution_status"] != "SUBMITTED":
+        if record["approval_status"] != "APPROVED" or record["execution_status"] != "CLAIMED":
             raise ValueError("retry request must be claimed before submission is finalized")
         updated_at = self._now_iso()
         conn.execute(
             """
             UPDATE retry_requests
-            SET attempt_count = ?,
+            SET execution_status = ?,
+                attempt_count = ?,
                 result_run_id = ?,
                 result_job_id = ?,
                 result_pbs_job_id = ?,
@@ -348,6 +333,7 @@ class RetryRequestRegistry:
             WHERE retry_request_id = ?
             """,
             (
+                "SUBMITTED",
                 record["attempt_count"] + 1,
                 result_run_id,
                 result_job_id,
@@ -506,7 +492,7 @@ class RetryRequestRegistry:
                 approval_status = 'PENDING'
                 OR (
                   approval_status = 'APPROVED'
-                  AND execution_status = 'NOT_STARTED'
+                  AND execution_status IN ('NOT_STARTED', 'CLAIMED')
                 )
               )
             ORDER BY created_at ASC, retry_request_id ASC
