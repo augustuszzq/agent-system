@@ -355,7 +355,7 @@ def scan_incident(
     bridge = build_bridge_service()
 
     try:
-        fetched = collect_incident_evidence(settings.paths, job_record, bridge)
+        fetched = collect_incident_evidence(settings.paths, job_record, bridge, settings.remote_root)
     except IncidentFetchError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)

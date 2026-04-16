@@ -11,6 +11,7 @@ from autoresearch.schemas import BridgeStatusResult, CommandResult
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "incidents"
+REMOTE_ROOT = "/remote/repo"
 
 
 def _paths(tmp_path: Path) -> AppPaths:
@@ -112,6 +113,7 @@ def test_collect_incident_evidence_fetches_live_snapshot_when_bridge_attached(
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "live"
@@ -162,6 +164,7 @@ def test_collect_incident_evidence_prefers_qstat_log_paths_for_live_tails(
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "live"
@@ -198,6 +201,7 @@ def test_collect_incident_evidence_falls_back_to_job_log_paths_when_qstat_paths_
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "live"
@@ -234,6 +238,7 @@ def test_collect_incident_evidence_rejects_out_of_root_qstat_paths_and_uses_stor
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "live"
@@ -262,6 +267,7 @@ def test_collect_incident_evidence_falls_back_to_latest_snapshot_when_bridge_det
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "local-fallback"
@@ -285,6 +291,7 @@ def test_collect_incident_evidence_raises_when_no_live_or_local_evidence(
             paths=paths,
             job_record=job_record,
             bridge_client=bridge,
+            remote_root=REMOTE_ROOT,
         )
 
 
@@ -317,7 +324,40 @@ def test_collect_incident_evidence_raises_when_live_log_paths_are_unusable(
             paths=paths,
             job_record=job_record,
             bridge_client=bridge,
+            remote_root=REMOTE_ROOT,
         )
+
+
+def test_collect_incident_evidence_keeps_live_snapshot_when_one_log_stream_is_missing(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents.fetch import collect_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
+    stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=_fixture_text("qstat_running.json")),
+            stdout_command: _command_result(stdout="fresh stdout\n"),
+            stderr_command: _command_result(stderr="missing stderr log", returncode=1),
+        },
+    )
+
+    result = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
+    )
+
+    assert result.source == "live"
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "fresh stdout\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == ""
 
 
 def test_collect_incident_evidence_falls_back_to_local_snapshot_when_live_persistence_fails(
@@ -363,6 +403,7 @@ def test_collect_incident_evidence_falls_back_to_local_snapshot_when_live_persis
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "local-fallback"
@@ -406,6 +447,7 @@ def test_collect_incident_evidence_persists_fresh_live_snapshot_when_same_second
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     assert result.source == "live"
@@ -447,6 +489,7 @@ def test_normalize_incident_evidence_parses_qstat_and_stabilizes_repeated_tail_h
         paths=paths,
         job_record=job_record,
         bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
     )
 
     normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
@@ -491,6 +534,7 @@ def test_normalize_incident_evidence_ignores_corrupt_previous_snapshot(
         paths=paths,
         job_record=job_record,
         bridge_client=FakeBridgeClient(state="DETACHED"),
+        remote_root=REMOTE_ROOT,
     )
 
     normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
@@ -520,6 +564,7 @@ def test_normalize_incident_evidence_raises_controlled_error_for_malformed_snaps
         paths=paths,
         job_record=job_record,
         bridge_client=FakeBridgeClient(state="DETACHED"),
+        remote_root=REMOTE_ROOT,
     )
 
     with pytest.raises(IncidentNormalizationError, match="incident snapshot normalization failed"):

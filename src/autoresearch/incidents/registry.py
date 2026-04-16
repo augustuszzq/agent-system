@@ -73,6 +73,7 @@ class IncidentRegistry:
                 (job_id, category, fingerprint),
             ).fetchone()
             if row is not None:
+                updated_at = self._effective_updated_at(updated_at, row["updated_at"])
                 conn.execute(
                     """
                     UPDATE incidents
@@ -193,6 +194,17 @@ class IncidentRegistry:
         scan_time = evidence.get("scan_time")
         if isinstance(scan_time, str) and scan_time:
             return scan_time
+        return datetime.now(UTC).isoformat(timespec="microseconds")
+
+    @staticmethod
+    def _effective_updated_at(candidate: str, previous: str) -> str:
+        try:
+            candidate_dt = datetime.fromisoformat(candidate)
+            previous_dt = datetime.fromisoformat(previous)
+        except ValueError:
+            return candidate if candidate > previous else previous
+        if candidate_dt > previous_dt:
+            return candidate
         return datetime.now(UTC).isoformat(timespec="microseconds")
 
     @staticmethod

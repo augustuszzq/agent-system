@@ -482,7 +482,9 @@ def test_incident_scan_reports_created_incident_with_monkeypatched_fetch(tmp_pat
     monkeypatch.setattr(
         cli_module,
         "collect_incident_evidence",
-        lambda paths, job, bridge: collect_calls.append((paths, job, bridge)) or fake_fetched,
+        lambda paths, job, bridge, remote_root: collect_calls.append(
+            (paths, job, bridge, remote_root)
+        ) or fake_fetched,
     )
     monkeypatch.setattr(cli_module, "normalize_incident_evidence", lambda **kwargs: fake_normalized)
     monkeypatch.setattr(cli_module, "classify_incident", lambda incident: fake_classified)
@@ -491,7 +493,8 @@ def test_incident_scan_reports_created_incident_with_monkeypatched_fetch(tmp_pat
 
     assert result.exit_code == 0
     expected_paths = cli_module.load_settings().paths
-    assert collect_calls == [(expected_paths, job_record, fake_bridge)]
+    expected_remote_root = cli_module.load_settings().remote_root
+    assert collect_calls == [(expected_paths, job_record, fake_bridge, expected_remote_root)]
     assert "created incident" in result.stdout.lower()
     assert "source=live" in result.stdout
 
@@ -560,7 +563,11 @@ def test_incident_scan_reports_no_incident_when_classifier_returns_none(tmp_path
     )
 
     monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_bridge)
-    monkeypatch.setattr(cli_module, "collect_incident_evidence", lambda paths, job, bridge: fake_fetched)
+    monkeypatch.setattr(
+        cli_module,
+        "collect_incident_evidence",
+        lambda paths, job, bridge, remote_root: fake_fetched,
+    )
     monkeypatch.setattr(cli_module, "normalize_incident_evidence", lambda **kwargs: fake_normalized)
     monkeypatch.setattr(cli_module, "classify_incident", lambda incident: None)
 
@@ -599,7 +606,9 @@ def test_incident_scan_reports_fetch_errors_to_stderr(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(
         cli_module,
         "collect_incident_evidence",
-        lambda paths, job, bridge: (_ for _ in ()).throw(IncidentFetchError("fetch failed")),
+        lambda paths, job, bridge, remote_root: (_ for _ in ()).throw(
+            IncidentFetchError("fetch failed")
+        ),
     )
 
     result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
@@ -645,7 +654,11 @@ def test_incident_scan_reports_malformed_snapshot_as_cli_failure(tmp_path, monke
     fake_fetched = IncidentFetchResult(source="local-fallback", snapshot=fake_snapshot, previous_snapshot=None)
 
     monkeypatch.setattr(cli_module, "build_bridge_service", lambda: FakeBridgeService())
-    monkeypatch.setattr(cli_module, "collect_incident_evidence", lambda paths, job, bridge: fake_fetched)
+    monkeypatch.setattr(
+        cli_module,
+        "collect_incident_evidence",
+        lambda paths, job, bridge, remote_root: fake_fetched,
+    )
 
     result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
 
@@ -727,7 +740,7 @@ def test_incident_scan_reports_updated_incident_when_matching_row_exists(tmp_pat
     monkeypatch.setattr(
         cli_module,
         "collect_incident_evidence",
-        lambda paths, job, bridge: fake_fetched,
+        lambda paths, job, bridge, remote_root: fake_fetched,
     )
     monkeypatch.setattr(cli_module, "normalize_incident_evidence", lambda **kwargs: fake_normalized)
     monkeypatch.setattr(cli_module, "classify_incident", lambda incident: fake_classified)

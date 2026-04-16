@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from autoresearch.db import connect_db, init_db
@@ -89,6 +90,60 @@ def test_upsert_incident_reopens_resolved_row_for_same_job_category_fingerprint(
     assert reopened.status == "OPEN"
     assert reopened.resolved_at is None
     assert [row.incident_id for row in registry.list_open_incidents()] == [created.incident_id]
+
+
+def test_upsert_incident_keeps_updated_at_monotonic_when_reopening_from_stale_snapshot(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    created = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="HIGH",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:10:00+00:00",
+            "snapshot_dir": "/tmp/scan-a",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+
+    with connect_db(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE incidents
+            SET status = 'RESOLVED',
+                updated_at = '2026-04-16T00:12:00+00:00',
+                resolved_at = '2026-04-16T00:12:00+00:00'
+            WHERE incident_id = ?
+            """,
+            (created.incident_id,),
+        )
+
+    reopened = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="CRITICAL",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:05:00+00:00",
+            "snapshot_dir": "/tmp/scan-b",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+
+    assert reopened.status == "OPEN"
+    assert reopened.resolved_at is None
+    assert datetime.fromisoformat(reopened.updated_at) > datetime.fromisoformat(
+        "2026-04-16T00:12:00+00:00"
+    )
 
 
 def test_upsert_incident_reuses_existing_row_when_fingerprint_is_null(tmp_path: Path) -> None:

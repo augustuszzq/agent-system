@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-import posixpath
 import shlex
 from typing import Protocol
 
@@ -27,13 +26,19 @@ def collect_incident_evidence(
     paths: AppPaths,
     job_record: JobRecord,
     bridge_client: _BridgeClient,
+    remote_root: str,
 ) -> IncidentFetchResult:
     latest_snapshot = _latest_snapshot(paths, job_record.job_id)
 
     bridge_status = bridge_client.status()
     if bridge_status.state == "ATTACHED":
         try:
-            return _fetch_live_snapshot(paths=paths, job_record=job_record, bridge_client=bridge_client)
+            return _fetch_live_snapshot(
+                paths=paths,
+                job_record=job_record,
+                bridge_client=bridge_client,
+                remote_root=remote_root,
+            )
         except IncidentFetchError:
             if latest_snapshot is not None:
                 return IncidentFetchResult(
@@ -58,6 +63,7 @@ def _fetch_live_snapshot(
     paths: AppPaths,
     job_record: JobRecord,
     bridge_client: _BridgeClient,
+    remote_root: str,
 ) -> IncidentFetchResult:
     if not job_record.pbs_job_id:
         raise IncidentFetchError(f"job {job_record.job_id} has no PBS job id")
@@ -77,22 +83,23 @@ def _fetch_live_snapshot(
     except (ValueError, TypeError) as exc:
         raise IncidentFetchError("qstat fetch returned invalid job data") from exc
 
-    managed_root = _managed_remote_root(job_record)
-    stdout_path = _preferred_remote_path(qstat.stdout_path, job_record.stdout_path, managed_root)
-    stderr_path = _preferred_remote_path(qstat.stderr_path, job_record.stderr_path, managed_root)
+    stdout_path = _preferred_remote_path(qstat.stdout_path, job_record.stdout_path, remote_root)
+    stderr_path = _preferred_remote_path(qstat.stderr_path, job_record.stderr_path, remote_root)
     if stdout_path is None and stderr_path is None:
         raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr paths")
 
-    stdout_tail = _tail_remote_path(
+    stdout_tail, stdout_available = _tail_remote_path(
         bridge_client,
         stdout_path,
         "stdout",
     )
-    stderr_tail = _tail_remote_path(
+    stderr_tail, stderr_available = _tail_remote_path(
         bridge_client,
         stderr_path,
         "stderr",
     )
+    if not stdout_available and not stderr_available:
+        raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr evidence")
 
     qstat_json_path = snapshot_dir / "qstat.json"
     stdout_tail_path = snapshot_dir / "stdout.tail.log"
@@ -118,15 +125,19 @@ def _fetch_live_snapshot(
     )
 
 
-def _tail_remote_path(bridge_client: _BridgeClient, remote_path: str | None, label: str) -> str:
+def _tail_remote_path(
+    bridge_client: _BridgeClient,
+    remote_path: str | None,
+    label: str,
+) -> tuple[str, bool]:
     if remote_path is None or not remote_path.strip():
-        return ""
+        return "", False
 
     tail_command = f"tail -n 200 {shlex.quote(remote_path)}"
     result = bridge_client.exec(tail_command)
     if result.returncode != 0:
-        raise IncidentFetchError(result.stderr.strip() or f"{label} tail fetch failed")
-    return result.stdout
+        return "", False
+    return result.stdout, True
 
 
 def _scan_time_now() -> str:
@@ -136,47 +147,22 @@ def _scan_time_now() -> str:
 def _preferred_remote_path(
     primary: str | None,
     fallback: str | None,
-    managed_root: str | None,
+    remote_root: str,
 ) -> str | None:
     for candidate in (primary, fallback):
-        normalized = _validated_remote_path(candidate, managed_root)
+        normalized = _validated_remote_path(candidate, remote_root)
         if normalized is not None:
             return normalized
     return None
 
 
-def _validated_remote_path(candidate: str | None, managed_root: str | None) -> str | None:
+def _validated_remote_path(candidate: str | None, remote_root: str) -> str | None:
     if candidate is None or not candidate.strip():
         return None
-    if managed_root is None:
-        return candidate
     try:
-        return ensure_remote_path_within_root(candidate, managed_root)
+        return ensure_remote_path_within_root(candidate, remote_root)
     except RemoteBridgeError:
         return None
-
-
-def _managed_remote_root(job_record: JobRecord) -> str | None:
-    for candidate in (
-        job_record.submit_script_path,
-        job_record.stdout_path,
-        job_record.stderr_path,
-    ):
-        root = _infer_remote_root(candidate)
-        if root is not None:
-            return root
-    return None
-
-
-def _infer_remote_root(candidate: str | None) -> str | None:
-    if candidate is None or not candidate.strip():
-        return None
-
-    normalized = posixpath.normpath(candidate.strip())
-    for marker in ("/runs/", "/jobs/", "/repo/"):
-        if marker in normalized:
-            return normalized.split(marker, 1)[0]
-    return None
 
 
 def _allocate_snapshot_scan_time(paths: AppPaths, job_id: str, base_scan_time: str) -> str:
