@@ -14,6 +14,11 @@ from autoresearch.bridge.remote_exec import (
 from autoresearch.bridge.remote_fs import bootstrap_remote_root
 from autoresearch.bridge.ssh_master import SSHMasterClient
 from autoresearch.db import init_db
+from autoresearch.incidents.classifier import classify_incident
+from autoresearch.incidents.fetch import IncidentFetchError, collect_incident_evidence
+from autoresearch.incidents.normalize import normalize_incident_evidence
+from autoresearch.incidents.registry import IncidentRegistry
+from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
 from autoresearch.executor.pbs import (
     build_qstat_command,
     build_qsub_command,
@@ -33,12 +38,14 @@ run_app = typer.Typer(help="Run registry commands.")
 job_app = typer.Typer(help="Job helpers.")
 bridge_app = typer.Typer(help="ALCF bridge commands.")
 remote_app = typer.Typer(help="Remote environment commands.")
+incident_app = typer.Typer(help="Incident triage commands.")
 
 app.add_typer(db_app, name="db")
 app.add_typer(run_app, name="run")
 app.add_typer(job_app, name="job")
 app.add_typer(bridge_app, name="bridge")
 app.add_typer(remote_app, name="remote")
+app.add_typer(incident_app, name="incident")
 
 
 @db_app.command("init")
@@ -332,6 +339,70 @@ def run_remote_bootstrap(force: bool) -> None:
         bootstrap_remote_root(service, settings.remote_root, force=force)
     except RemoteBridgeError as error:
         _fail_remote_bridge_error(error)
+
+
+@incident_app.command("scan")
+def scan_incident(
+    job_id: str = typer.Option(..., "--job-id"),
+) -> None:
+    settings = load_settings()
+    registry = RunRegistry(settings.paths.db_path)
+    job_record = registry.get_job(job_id)
+    bridge = build_bridge_service()
+
+    try:
+        fetched = collect_incident_evidence(settings.paths, job_record, bridge)
+    except IncidentFetchError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
+    classified = classify_incident(normalized)
+    if classified is None:
+        typer.echo(f"No incident detected for job {job_id}.")
+        return
+
+    incident_registry = IncidentRegistry(settings.paths.db_path)
+    was_open = any(
+        record.job_id == normalized.job_id
+        and record.category == classified.category
+        and record.fingerprint == classified.fingerprint
+        for record in incident_registry.list_open_incidents()
+    )
+    evidence = {
+        "scan_time": normalized.scan_time,
+        "snapshot_dir": str(normalized.snapshot_dir),
+        "qstat_comment": normalized.comment,
+        "job_state": normalized.job_state,
+        "exec_host": normalized.exec_host,
+        "matched_lines": list(classified.matched_lines),
+        "classifier_rule": classified.rule_name,
+    }
+    record = incident_registry.upsert_incident(
+        run_id=normalized.run_id,
+        job_id=normalized.job_id,
+        severity=classified.severity,
+        category=classified.category,
+        fingerprint=classified.fingerprint,
+        evidence=evidence,
+    )
+    action = "updated" if was_open else "created"
+    typer.echo(f"{action.capitalize()} incident {record.incident_id} for job {job_id}")
+
+
+@incident_app.command("list")
+def list_incidents() -> None:
+    settings = load_settings()
+    registry = IncidentRegistry(settings.paths.db_path)
+    for record in registry.list_open_incidents():
+        typer.echo(render_incident_row(record))
+
+
+@incident_app.command("summarize")
+def summarize_incidents() -> None:
+    settings = load_settings()
+    registry = IncidentRegistry(settings.paths.db_path)
+    typer.echo(render_incident_summary(registry.summarize_open_incidents()))
 
 
 @bridge_app.command("attach")

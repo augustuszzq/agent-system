@@ -6,8 +6,18 @@ from autoresearch import cli as cli_module
 from autoresearch.bridge.remote_exec import RemoteBridgeError
 from autoresearch.cli import app
 from autoresearch.db import init_db
+from autoresearch.incidents.registry import IncidentRegistry
+from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
 from autoresearch.runs.registry import RunRegistry
-from autoresearch.schemas import BridgeStatusResult, CommandResult
+from autoresearch.schemas import (
+    BridgeStatusResult,
+    ClassifiedIncident,
+    CommandResult,
+    IncidentFetchResult,
+    IncidentSnapshotRef,
+    NormalizedIncidentInput,
+    RunCreateRequest,
+)
 
 
 runner = CliRunner()
@@ -159,6 +169,7 @@ def test_cli_help_shows_top_level_commands() -> None:
     assert "run" in result.stdout
     assert "bridge" in result.stdout
     assert "job" in result.stdout
+    assert "incident" in result.stdout
 
 
 def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
@@ -328,6 +339,173 @@ def test_job_poll_propagates_remote_bridge_error(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "qstat failed" in result.stderr
+
+
+def test_incident_list_prints_open_incident_row(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    registry = IncidentRegistry(tmp_path / "state" / "autoresearch.db")
+    record = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="HIGH",
+        category="ENV_PATH_ERROR",
+        fingerprint="fp-123",
+        evidence={
+            "scan_time": "2026-04-16T12:00:00",
+            "snapshot_dir": str(tmp_path / "state" / "incidents" / "job_demo" / "scan"),
+            "qstat_comment": "missing file",
+            "job_state": "F",
+            "exec_host": "node01",
+            "matched_lines": ["missing file"],
+            "classifier_rule": "env_path_error",
+        },
+    )
+
+    result = runner.invoke(app, ["incident", "list"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == render_incident_row(record)
+
+
+def test_incident_summarize_prints_category_counts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    registry = IncidentRegistry(tmp_path / "state" / "autoresearch.db")
+    registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_oom",
+        severity="CRITICAL",
+        category="RESOURCE_OOM",
+        fingerprint="fp-oom",
+        evidence={
+            "scan_time": "2026-04-16T12:00:00",
+            "snapshot_dir": str(tmp_path / "state" / "incidents" / "job_oom" / "scan"),
+            "qstat_comment": "out of memory",
+            "job_state": "F",
+            "exec_host": "node01",
+            "matched_lines": ["out of memory"],
+            "classifier_rule": "resource_oom",
+        },
+    )
+    registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_path",
+        severity="HIGH",
+        category="ENV_PATH_ERROR",
+        fingerprint="fp-path",
+        evidence={
+            "scan_time": "2026-04-16T12:00:01",
+            "snapshot_dir": str(tmp_path / "state" / "incidents" / "job_path" / "scan"),
+            "qstat_comment": "cannot open",
+            "job_state": "F",
+            "exec_host": "node02",
+            "matched_lines": ["cannot open"],
+            "classifier_rule": "env_path_error",
+        },
+    )
+
+    result = runner.invoke(app, ["incident", "summarize"])
+
+    assert result.exit_code == 0
+    summary = registry.summarize_open_incidents()
+    assert result.stdout.strip() == render_incident_summary(summary)
+    assert "Counts:" in result.stdout
+    assert "'RESOURCE_OOM': 1" in result.stdout
+    assert "'ENV_PATH_ERROR': 1" in result.stdout
+
+
+def test_incident_scan_reports_created_incident_with_monkeypatched_fetch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+
+    init_db(tmp_path / "state" / "autoresearch.db")
+    run_registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    run_record = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    job_record = run_registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+
+    fake_bridge = FakeBridgeService()
+    collect_calls: list[tuple[object, object, object]] = []
+    fake_snapshot_dir = tmp_path / "state" / "incidents" / job_record.job_id / "2026-04-16T12:00:00"
+    fake_snapshot_dir.mkdir(parents=True)
+    fake_snapshot = IncidentSnapshotRef(
+        scan_time="2026-04-16T12:00:00",
+        snapshot_dir=fake_snapshot_dir,
+        qstat_json_path=fake_snapshot_dir / "qstat.json",
+        stdout_tail_path=fake_snapshot_dir / "stdout.tail.log",
+        stderr_tail_path=fake_snapshot_dir / "stderr.tail.log",
+    )
+    fake_fetched = IncidentFetchResult(source="live", snapshot=fake_snapshot, previous_snapshot=None)
+    fake_normalized = NormalizedIncidentInput(
+        job_id=job_record.job_id,
+        run_id=job_record.run_id,
+        pbs_job_id=job_record.pbs_job_id,
+        job_state="F",
+        comment="cannot open",
+        exec_host="node01",
+        stdout_tail="stdout tail",
+        stderr_tail="stderr tail",
+        snapshot_dir=fake_snapshot.snapshot_dir,
+        scan_time=fake_snapshot.scan_time,
+        current_log_tail_hash="abc123",
+        previous_log_tail_hash=None,
+    )
+    fake_classified = ClassifiedIncident(
+        category="ENV_PATH_ERROR",
+        severity="HIGH",
+        fingerprint="fp-123",
+        matched_lines=("cannot open",),
+        rule_name="env_path_error",
+    )
+
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: fake_bridge)
+    monkeypatch.setattr(
+        cli_module,
+        "collect_incident_evidence",
+        lambda paths, job, bridge: collect_calls.append((paths, job, bridge)) or fake_fetched,
+    )
+    monkeypatch.setattr(cli_module, "normalize_incident_evidence", lambda **kwargs: fake_normalized)
+    monkeypatch.setattr(cli_module, "classify_incident", lambda incident: fake_classified)
+
+    result = runner.invoke(app, ["incident", "scan", "--job-id", job_record.job_id])
+
+    assert result.exit_code == 0
+    expected_paths = cli_module.load_settings().paths
+    assert collect_calls == [(expected_paths, job_record, fake_bridge)]
+    assert "created incident" in result.stdout.lower()
+
+    incident_registry = IncidentRegistry(tmp_path / "state" / "autoresearch.db")
+    records = incident_registry.list_open_incidents()
+    assert len(records) == 1
+    assert records[0].category == "ENV_PATH_ERROR"
+    assert records[0].evidence == {
+        "scan_time": "2026-04-16T12:00:00",
+        "snapshot_dir": str(fake_snapshot.snapshot_dir),
+        "qstat_comment": "cannot open",
+        "job_state": "F",
+        "exec_host": "node01",
+        "matched_lines": ["cannot open"],
+        "classifier_rule": "env_path_error",
+    }
 
 
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
