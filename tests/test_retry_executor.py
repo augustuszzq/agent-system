@@ -187,6 +187,11 @@ def test_execute_retry_claims_request_before_blocking_submitter_returns(tmp_path
     claimed = RetryRequestRegistry(db_path).get(request.retry_request_id)
     assert claimed.execution_status == "CLAIMED"
     assert claimed.approval_status == "APPROVED"
+    assert claimed.attempt_count == 0
+    assert claimed.result_run_id is None
+    assert claimed.result_job_id is None
+    assert claimed.result_pbs_job_id is None
+    assert claimed.executed_at is None
 
     release_submitter.set()
     thread.join(timeout=2)
@@ -242,6 +247,11 @@ def test_execute_retry_blocks_duplicate_execution_before_second_submitter_call(t
 
     claimed = RetryRequestRegistry(db_path).get(request.retry_request_id)
     assert claimed.execution_status == "CLAIMED"
+    assert claimed.attempt_count == 0
+    assert claimed.result_run_id is None
+    assert claimed.result_job_id is None
+    assert claimed.result_pbs_job_id is None
+    assert claimed.executed_at is None
 
     second_thread.start()
     time.sleep(0.2)
