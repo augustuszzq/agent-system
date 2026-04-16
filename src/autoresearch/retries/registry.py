@@ -275,11 +275,8 @@ class RetryRequestRegistry:
         self, conn: sqlite3.Connection, retry_request_id: str, *, error_text: str
     ) -> RetryRequestRecord:
         record = self._get_row_for_update(conn, retry_request_id)
-        if record["approval_status"] != "APPROVED" or record["execution_status"] not in {
-            "NOT_STARTED",
-            "CLAIMED",
-        }:
-            raise ValueError("retry request must be approved and not started or claimed")
+        if record["approval_status"] != "APPROVED" or record["execution_status"] != "CLAIMED":
+            raise ValueError("retry request must be approved and claimed")
         updated_at = self._now_iso()
         conn.execute(
             """
