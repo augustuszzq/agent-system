@@ -10,6 +10,8 @@ from autoresearch.schemas import ClassifiedIncident, NormalizedIncidentInput
 _FILESYSTEM_UNAVAILABLE_PATTERNS = (
     "filesystem unavailable",
     "filesystems unavailable",
+    "eagle unavailable",
+    "eagle is unavailable",
 )
 _OOM_PATTERNS = (
     "out of memory",
@@ -31,6 +33,7 @@ _PATH_ERROR_PATTERNS = (
     "no such file or directory",
     "cannot open",
     "cannot cd",
+    "can't open file",
 )
 _NCCL_PATTERNS = (
     "nccl",
@@ -132,7 +135,10 @@ def _match_resource_walltime(incident: NormalizedIncidentInput) -> ClassifiedInc
 
 
 def _match_import_error(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(_iter_nonempty_lines(incident.stderr_tail), _IMPORT_ERROR_PATTERNS)
+    line = _first_matching_line(
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
+        _IMPORT_ERROR_PATTERNS,
+    )
     if line is None:
         return None
 
@@ -147,7 +153,10 @@ def _match_import_error(incident: NormalizedIncidentInput) -> ClassifiedIncident
 
 
 def _match_path_error(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(_iter_nonempty_lines(incident.stderr_tail), _PATH_ERROR_PATTERNS)
+    line = _first_matching_line(
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
+        _PATH_ERROR_PATTERNS,
+    )
     if line is None:
         return None
     return ClassifiedIncident(
@@ -160,7 +169,10 @@ def _match_path_error(incident: NormalizedIncidentInput) -> ClassifiedIncident |
 
 
 def _match_nccl_failure(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(_iter_nonempty_lines(incident.stderr_tail), _NCCL_PATTERNS)
+    line = _first_matching_line(
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
+        _NCCL_PATTERNS,
+    )
     if line is None:
         return None
     return ClassifiedIncident(
@@ -173,7 +185,10 @@ def _match_nccl_failure(incident: NormalizedIncidentInput) -> ClassifiedIncident
 
 
 def _match_mpi_bootstrap(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(_iter_nonempty_lines(incident.stderr_tail), _MPI_PATTERNS)
+    line = _first_matching_line(
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
+        _MPI_PATTERNS,
+    )
     if line is None:
         return None
     return ClassifiedIncident(

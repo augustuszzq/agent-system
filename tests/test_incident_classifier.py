@@ -46,6 +46,16 @@ def test_classify_filesystem_unavailable_from_qstat_comment() -> None:
     assert result.severity == "CRITICAL"
 
 
+def test_classify_filesystem_unavailable_from_eagle_unavailable_comment() -> None:
+    result = classify_incident(
+        _normalized(comment="eagle unavailable for maintenance")
+    )
+
+    assert result is not None
+    assert result.category == "FILESYSTEM_UNAVAILABLE"
+    assert result.severity == "CRITICAL"
+
+
 def test_classify_resource_oom_from_stdout_tail() -> None:
     result = classify_incident(
         _normalized(stdout_tail=_fixture_text("stdout_oom.log"))
@@ -86,6 +96,16 @@ def test_classify_import_error_from_stderr_tail() -> None:
     assert result.fingerprint == "no module named nonexistent_package"
 
 
+def test_classify_import_error_from_stdout_tail() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="ModuleNotFoundError: No module named 'demo_dependency'\n")
+    )
+
+    assert result is not None
+    assert result.category == "ENV_IMPORT_ERROR"
+    assert result.fingerprint == "no module named demo_dependency"
+
+
 def test_classify_nccl_failure_is_critical() -> None:
     result = classify_incident(
         _normalized(stderr_tail=_fixture_text("stderr_nccl_failure.log"))
@@ -103,6 +123,16 @@ def test_classify_mpi_bootstrap_is_critical() -> None:
 
     assert result is not None
     assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_nccl_failure_from_stdout_tail() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="NCCL WARN connection closed by remote peer\n")
+    )
+
+    assert result is not None
+    assert result.category == "NCCL_FAILURE"
     assert result.severity == "CRITICAL"
 
 
@@ -169,3 +199,23 @@ def test_classify_path_error_matches_cannot_cd() -> None:
     assert result is not None
     assert result.category == "ENV_PATH_ERROR"
     assert result.severity == "HIGH"
+
+
+def test_classify_path_error_matches_cant_open_file_from_stdout_tail() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="bash: can't open file /tmp/demo.py: No such file or directory\n")
+    )
+
+    assert result is not None
+    assert result.category == "ENV_PATH_ERROR"
+    assert result.severity == "HIGH"
+
+
+def test_classify_mpi_bootstrap_from_stdout_tail() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="MPI_Init failed during bootstrap\nPMI server not found\n")
+    )
+
+    assert result is not None
+    assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
