@@ -399,3 +399,16 @@ def test_build_daily_report_begins_read_transaction_before_selects(
     assert calls[0] == "BEGIN"
     assert "SELECT" in calls[1:]
     assert result.markdown
+
+
+def test_write_daily_report_writes_state_reports_file(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+
+    builder = DailyReportBuilder(db_path=db_path, state_dir=tmp_path / "state")
+    result = builder.build(report_date=REPORT_DATE, generated_at=GENERATED_AT)
+    written_path = builder.write(result)
+
+    assert written_path == tmp_path / "state" / "reports" / "daily" / f"{REPORT_DATE}.md"
+    assert written_path.exists()
+    assert written_path.read_text(encoding="utf-8") == result.markdown

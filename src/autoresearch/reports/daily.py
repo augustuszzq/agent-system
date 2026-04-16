@@ -55,6 +55,11 @@ class DailyReportBuilder:
         output_path = self._state_dir / "reports" / "daily" / f"{report_date}.md"
         return DailyReportResult(report_date=report_date, markdown=markdown, output_path=output_path)
 
+    def write(self, result: DailyReportResult) -> Path:
+        result.output_path.parent.mkdir(parents=True, exist_ok=True)
+        result.output_path.write_text(result.markdown, encoding="utf-8")
+        return result.output_path
+
     def _build_context(
         self,
         conn: sqlite3.Connection,
