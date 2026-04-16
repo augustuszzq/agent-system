@@ -146,6 +146,43 @@ def test_upsert_incident_keeps_updated_at_monotonic_when_reopening_from_stale_sn
     )
 
 
+def test_upsert_incident_handles_mixed_naive_and_aware_scan_times(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    created = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="HIGH",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:00:00",
+            "snapshot_dir": "/tmp/scan-a",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+    updated = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="CRITICAL",
+        category="ENV_IMPORT_ERROR",
+        fingerprint="no module named nonexistent_package",
+        evidence={
+            "scan_time": "2026-04-16T00:05:00+00:00",
+            "snapshot_dir": "/tmp/scan-b",
+            "classifier_rule": "import-error",
+            "matched_lines": ["ModuleNotFoundError: No module named 'nonexistent_package'"],
+        },
+    )
+
+    assert created.incident_id == updated.incident_id
+    assert updated.severity == "CRITICAL"
+    assert updated.updated_at == "2026-04-16T00:05:00+00:00"
+
+
 def test_upsert_incident_reuses_existing_row_when_fingerprint_is_null(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "autoresearch.db"
     init_db(db_path)

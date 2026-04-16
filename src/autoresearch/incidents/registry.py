@@ -199,13 +199,20 @@ class IncidentRegistry:
     @staticmethod
     def _effective_updated_at(candidate: str, previous: str) -> str:
         try:
-            candidate_dt = datetime.fromisoformat(candidate)
-            previous_dt = datetime.fromisoformat(previous)
+            candidate_dt = IncidentRegistry._normalized_iso_datetime(candidate)
+            previous_dt = IncidentRegistry._normalized_iso_datetime(previous)
         except ValueError:
             return candidate if candidate > previous else previous
         if candidate_dt > previous_dt:
             return candidate
         return datetime.now(UTC).isoformat(timespec="microseconds")
+
+    @staticmethod
+    def _normalized_iso_datetime(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> IncidentRecord:
