@@ -83,23 +83,22 @@ def _fetch_live_snapshot(
     except (ValueError, TypeError) as exc:
         raise IncidentFetchError("qstat fetch returned invalid job data") from exc
 
-    stdout_path = _preferred_remote_path(qstat.stdout_path, job_record.stdout_path, remote_root)
-    stderr_path = _preferred_remote_path(qstat.stderr_path, job_record.stderr_path, remote_root)
-    if stdout_path is None and stderr_path is None:
-        raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr paths")
-
-    stdout_tail, stdout_available = _tail_remote_path(
-        bridge_client,
-        stdout_path,
-        "stdout",
+    stdout_tail, stdout_available = _tail_remote_path_candidates(
+        bridge_client=bridge_client,
+        primary_path=qstat.stdout_path,
+        fallback_path=job_record.stdout_path,
+        remote_root=remote_root,
+        label="stdout",
     )
-    stderr_tail, stderr_available = _tail_remote_path(
-        bridge_client,
-        stderr_path,
-        "stderr",
+    stderr_tail, stderr_available = _tail_remote_path_candidates(
+        bridge_client=bridge_client,
+        primary_path=qstat.stderr_path,
+        fallback_path=job_record.stderr_path,
+        remote_root=remote_root,
+        label="stderr",
     )
     if not stdout_available and not stderr_available:
-        raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr evidence")
+        raise IncidentFetchError(f"job {job_record.job_id} has no usable stdout/stderr paths")
 
     qstat_json_path = snapshot_dir / "qstat.json"
     stdout_tail_path = snapshot_dir / "stdout.tail.log"
@@ -125,35 +124,37 @@ def _fetch_live_snapshot(
     )
 
 
-def _tail_remote_path(
+def _tail_remote_path_candidates(
+    *,
     bridge_client: _BridgeClient,
-    remote_path: str | None,
+    primary_path: str | None,
+    fallback_path: str | None,
+    remote_root: str,
     label: str,
 ) -> tuple[str, bool]:
-    if remote_path is None or not remote_path.strip():
-        return "", False
-
-    tail_command = f"tail -n 200 {shlex.quote(remote_path)}"
-    result = bridge_client.exec(tail_command)
-    if result.returncode != 0:
-        return "", False
-    return result.stdout, True
+    for remote_path in _candidate_remote_paths(primary_path, fallback_path, remote_root):
+        tail_command = f"tail -n 200 {shlex.quote(remote_path)}"
+        result = bridge_client.exec(tail_command)
+        if result.returncode == 0:
+            return result.stdout, True
+    return "", False
 
 
 def _scan_time_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def _preferred_remote_path(
+def _candidate_remote_paths(
     primary: str | None,
     fallback: str | None,
     remote_root: str,
-) -> str | None:
+) -> list[str]:
+    candidates: list[str] = []
     for candidate in (primary, fallback):
         normalized = _validated_remote_path(candidate, remote_root)
-        if normalized is not None:
-            return normalized
-    return None
+        if normalized is not None and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
 
 
 def _validated_remote_path(candidate: str | None, remote_root: str) -> str | None:

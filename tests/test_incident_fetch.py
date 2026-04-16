@@ -247,6 +247,53 @@ def test_collect_incident_evidence_rejects_out_of_root_qstat_paths_and_uses_stor
     assert bridge.exec_calls == [qstat_command, stdout_command, stderr_command]
 
 
+def test_collect_incident_evidence_falls_back_to_stored_path_when_qstat_path_tail_fails(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents.fetch import collect_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    qstat_payload = json.loads(_fixture_text("qstat_running.json"))
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "polaris:/remote/repo/qstat/unreadable-stdout.log"
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "polaris:/remote/repo/qstat/unreadable-stderr.log"
+    qstat_text = json.dumps(qstat_payload)
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    qstat_stdout_command = "tail -n 200 /remote/repo/qstat/unreadable-stdout.log"
+    qstat_stderr_command = "tail -n 200 /remote/repo/qstat/unreadable-stderr.log"
+    stored_stdout_command = "tail -n 200 /remote/repo/runs/run_demo/stdout.log"
+    stored_stderr_command = "tail -n 200 /remote/repo/runs/run_demo/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=qstat_text),
+            qstat_stdout_command: _command_result(stderr="missing stdout", returncode=1),
+            qstat_stderr_command: _command_result(stderr="missing stderr", returncode=1),
+            stored_stdout_command: _command_result(stdout="stdout from stored path\n"),
+            stored_stderr_command: _command_result(stdout="stderr from stored path\n"),
+        },
+    )
+
+    result = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+        remote_root=REMOTE_ROOT,
+    )
+
+    assert result.source == "live"
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "stdout from stored path\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "stderr from stored path\n"
+    assert bridge.exec_calls == [
+        qstat_command,
+        qstat_stdout_command,
+        stored_stdout_command,
+        qstat_stderr_command,
+        stored_stderr_command,
+    ]
+
+
 def test_collect_incident_evidence_falls_back_to_latest_snapshot_when_bridge_detached(
     tmp_path: Path,
 ) -> None:
