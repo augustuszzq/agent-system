@@ -1,4 +1,6 @@
 from pathlib import Path
+from datetime import UTC, datetime as real_datetime
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -223,6 +225,7 @@ def test_cli_help_shows_top_level_commands() -> None:
     assert "job" in result.stdout
     assert "incident" in result.stdout
     assert "retry" in result.stdout
+    assert "report" in result.stdout
 
 
 def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
@@ -392,6 +395,57 @@ def test_job_poll_propagates_remote_bridge_error(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "qstat failed" in result.stderr
+
+
+def test_report_daily_prints_and_writes_report(tmp_path: Path, monkeypatch) -> None:
+    report_date = "2026-04-16"
+    settings = SimpleNamespace(
+        paths=SimpleNamespace(
+            db_path=tmp_path / "state" / "autoresearch.db",
+            state_dir=tmp_path / "state",
+        )
+    )
+    captured: dict[str, object] = {}
+
+    class FakeDailyReportBuilder:
+        def __init__(self, *, db_path: Path, state_dir: Path) -> None:
+            captured["db_path"] = db_path
+            captured["state_dir"] = state_dir
+
+        def build(self, *, report_date: str):
+            captured["report_date"] = report_date
+            return SimpleNamespace(
+                report_date=report_date,
+                markdown=f"# Daily Brief {report_date}\n\n## Paper Delta\n- fake\n",
+                output_path=tmp_path / "state" / "reports" / "daily" / f"{report_date}.md",
+            )
+
+        def write(self, result) -> Path:
+            captured["written_markdown"] = result.markdown
+            result.output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.output_path.write_text(result.markdown, encoding="utf-8")
+            return result.output_path
+
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "DailyReportBuilder", FakeDailyReportBuilder)
+
+    class FakeDateTime:
+        @staticmethod
+        def now(tz):
+            return real_datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(cli_module, "datetime", FakeDateTime)
+
+    result = runner.invoke(app, ["report", "daily"])
+
+    assert result.exit_code == 0
+    assert captured["db_path"] == settings.paths.db_path
+    assert captured["state_dir"] == settings.paths.state_dir
+    assert captured["report_date"] == report_date
+    assert result.stdout == f"# Daily Brief {report_date}\n\n## Paper Delta\n- fake\n"
+    written_path = tmp_path / "state" / "reports" / "daily" / f"{report_date}.md"
+    assert written_path.read_text(encoding="utf-8") == result.stdout
+    assert captured["written_markdown"] == result.stdout
 
 
 def test_incident_list_prints_open_incident_row(tmp_path, monkeypatch) -> None:

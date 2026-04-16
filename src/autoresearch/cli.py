@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 import shlex
 from typing import Annotated, Optional
@@ -26,6 +27,7 @@ from autoresearch.executor.pbs import (
 )
 from autoresearch.executor.polaris import build_polaris_job_request
 from autoresearch.executor.probe_submit import submit_live_probe_run
+from autoresearch.reports.daily import DailyReportBuilder
 from autoresearch.retries.executor import RetryExecutor
 from autoresearch.retries.policy import RetryPolicy
 from autoresearch.retries.registry import RetryRequestRegistry
@@ -42,6 +44,7 @@ bridge_app = typer.Typer(help="ALCF bridge commands.")
 remote_app = typer.Typer(help="Remote environment commands.")
 incident_app = typer.Typer(help="Incident triage commands.")
 retry_app = typer.Typer(help="Retry commands.")
+report_app = typer.Typer(help="Report commands.")
 
 app.add_typer(db_app, name="db")
 app.add_typer(run_app, name="run")
@@ -50,6 +53,7 @@ app.add_typer(bridge_app, name="bridge")
 app.add_typer(remote_app, name="remote")
 app.add_typer(incident_app, name="incident")
 app.add_typer(retry_app, name="retry")
+app.add_typer(report_app, name="report")
 
 
 @db_app.command("init")
@@ -334,6 +338,19 @@ def list_retry_requests() -> None:
     retry_registry = RetryRequestRegistry(settings.paths.db_path)
     for record in retry_registry.list_requests():
         typer.echo(_format_retry_request_row(record))
+
+
+@report_app.command("daily")
+def report_daily() -> None:
+    settings = load_settings()
+    builder = DailyReportBuilder(
+        db_path=settings.paths.db_path,
+        state_dir=settings.paths.state_dir,
+    )
+    report_date = datetime.now(UTC).date().isoformat()
+    result = builder.build(report_date=report_date)
+    builder.write(result)
+    typer.echo(result.markdown, nl=False)
 
 
 @retry_app.command("approve")
