@@ -1,8 +1,22 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 
 BridgeState = Literal["DETACHED", "ATTACHED", "STALE"]
+IncidentCategory = Literal[
+    "FILESYSTEM_UNAVAILABLE",
+    "RESOURCE_OOM",
+    "RESOURCE_WALLTIME",
+    "ENV_IMPORT_ERROR",
+    "ENV_PATH_ERROR",
+    "NCCL_FAILURE",
+    "MPI_BOOTSTRAP",
+    "NO_HEARTBEAT",
+    "UNKNOWN",
+]
+IncidentSeverity = Literal["CRITICAL", "HIGH", "MEDIUM"]
+IncidentStatus = Literal["OPEN", "RESOLVED"]
 
 
 @dataclass(frozen=True)
@@ -69,3 +83,44 @@ class QstatParseResult:
     exec_host: str | None = None
     stdout_path: str | None = None
     stderr_path: str | None = None
+
+
+@dataclass(frozen=True)
+class IncidentSnapshotRef:
+    scan_time: str
+    snapshot_dir: Path
+    qstat_json_path: Path
+    stdout_tail_path: Path
+    stderr_tail_path: Path
+
+
+@dataclass(frozen=True)
+class IncidentFetchResult:
+    source: Literal["live", "local-fallback"]
+    snapshot: IncidentSnapshotRef
+    previous_snapshot: IncidentSnapshotRef | None
+
+
+@dataclass(frozen=True)
+class NormalizedIncidentInput:
+    job_id: str
+    run_id: str
+    pbs_job_id: str | None
+    job_state: str
+    comment: str | None
+    exec_host: str | None
+    stdout_tail: str
+    stderr_tail: str
+    snapshot_dir: Path
+    scan_time: str
+    current_log_tail_hash: str
+    previous_log_tail_hash: str | None
+
+
+@dataclass(frozen=True)
+class ClassifiedIncident:
+    category: IncidentCategory
+    severity: IncidentSeverity
+    fingerprint: str
+    matched_lines: tuple[str, ...]
+    rule_name: str

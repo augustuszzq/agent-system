@@ -24,9 +24,30 @@ def connect_db(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row[1] for row in rows}
+
+
+def _ensure_incidents_updated_at(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "incidents")
+    if "updated_at" in columns:
+        return
+
+    conn.execute("ALTER TABLE incidents ADD COLUMN updated_at TEXT")
+    conn.execute(
+        """
+        UPDATE incidents
+        SET updated_at = created_at
+        WHERE updated_at IS NULL
+        """
+    )
+
+
 def init_db(db_path: Path) -> None:
     with connect_db(db_path) as conn:
         conn.execute(RUNS_TABLE_SQL)
         conn.execute(JOBS_TABLE_SQL)
         conn.execute(INCIDENTS_TABLE_SQL)
         conn.execute(DECISIONS_TABLE_SQL)
+        _ensure_incidents_updated_at(conn)
