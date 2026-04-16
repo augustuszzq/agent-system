@@ -56,6 +56,16 @@ def test_classify_resource_oom_from_stdout_tail() -> None:
     assert result.severity == "CRITICAL"
 
 
+def test_classify_walltime_from_stderr_tail_before_oom_fallback() -> None:
+    result = classify_incident(
+        _normalized(stderr_tail=_fixture_text("stderr_walltime.log"))
+    )
+
+    assert result is not None
+    assert result.category == "RESOURCE_WALLTIME"
+    assert result.severity == "HIGH"
+
+
 def test_classify_import_error_from_stderr_tail() -> None:
     result = classify_incident(
         _normalized(stderr_tail=_fixture_text("stderr_import_error.log"))
@@ -66,11 +76,31 @@ def test_classify_import_error_from_stderr_tail() -> None:
     assert result.fingerprint == "no module named nonexistent_package"
 
 
-def test_classify_no_heartbeat_only_when_running_and_hashes_repeat() -> None:
+def test_classify_nccl_failure_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stderr_tail=_fixture_text("stderr_nccl_failure.log"))
+    )
+
+    assert result is not None
+    assert result.category == "NCCL_FAILURE"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_mpi_bootstrap_is_critical() -> None:
+    result = classify_incident(
+        _normalized(stderr_tail=_fixture_text("stderr_mpi_bootstrap.log"))
+    )
+
+    assert result is not None
+    assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_no_heartbeat_requires_non_empty_stripped_output() -> None:
     result = classify_incident(
         _normalized(
             job_state="R",
-            stdout_tail="steady output",
+            stdout_tail="   steady output   \n",
             current_log_tail_hash="same",
             previous_log_tail_hash="same",
         )
@@ -79,6 +109,20 @@ def test_classify_no_heartbeat_only_when_running_and_hashes_repeat() -> None:
     assert result is not None
     assert result.category == "NO_HEARTBEAT"
     assert result.severity == "HIGH"
+    assert result.fingerprint == "no-heartbeat"
+
+
+def test_classify_no_heartbeat_rejects_whitespace_only_output() -> None:
+    result = classify_incident(
+        _normalized(
+            job_state="R",
+            stdout_tail="   \n\t  ",
+            current_log_tail_hash="same",
+            previous_log_tail_hash="same",
+        )
+    )
+
+    assert result is None
 
 
 def test_classify_returns_none_for_empty_evidence() -> None:

@@ -15,7 +15,6 @@ _OOM_PATTERNS = (
     "out of memory",
     "cuda out of memory",
     "cublas_status_alloc_failed",
-    "killed",
 )
 _WALLTIME_PATTERNS = (
     "walltime",
@@ -163,7 +162,7 @@ def _match_nccl_failure(incident: NormalizedIncidentInput) -> ClassifiedIncident
         return None
     return ClassifiedIncident(
         category="NCCL_FAILURE",
-        severity="HIGH",
+        severity="CRITICAL",
         fingerprint=_normalize_text(line),
         matched_lines=(line,),
         rule_name="nccl_failure",
@@ -176,7 +175,7 @@ def _match_mpi_bootstrap(incident: NormalizedIncidentInput) -> ClassifiedInciden
         return None
     return ClassifiedIncident(
         category="MPI_BOOTSTRAP",
-        severity="HIGH",
+        severity="CRITICAL",
         fingerprint=_normalize_text(line),
         matched_lines=(line,),
         rule_name="mpi_bootstrap",
@@ -186,14 +185,14 @@ def _match_mpi_bootstrap(incident: NormalizedIncidentInput) -> ClassifiedInciden
 def _match_no_heartbeat(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
     if incident.job_state.strip().upper() not in _RUNNING_LIKE_STATES:
         return None
-    if not incident.stdout_tail and not incident.stderr_tail:
+    if not _has_meaningful_output(incident.stdout_tail, incident.stderr_tail):
         return None
     if not incident.current_log_tail_hash or not incident.previous_log_tail_hash:
         return None
     if incident.current_log_tail_hash != incident.previous_log_tail_hash:
         return None
 
-    fingerprint = f"no heartbeat:{incident.current_log_tail_hash}"
+    fingerprint = "no-heartbeat"
     return ClassifiedIncident(
         category="NO_HEARTBEAT",
         severity="HIGH",
@@ -278,6 +277,10 @@ def _first_matching_line(lines: Iterable[str], patterns: Sequence[str]) -> str |
 def _contains_any(text: str, patterns: Sequence[str]) -> bool:
     lowered = text.lower()
     return any(pattern in lowered for pattern in patterns)
+
+
+def _has_meaningful_output(*chunks: str) -> bool:
+    return any(line for chunk in chunks if chunk for line in chunk.splitlines() if line.strip())
 
 
 def _normalize_text(value: str | None) -> str:
