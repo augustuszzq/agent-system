@@ -66,6 +66,16 @@ def test_classify_walltime_from_stderr_tail_before_oom_fallback() -> None:
     assert result.severity == "HIGH"
 
 
+def test_classify_walltime_from_stdout_tail() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="training step 200\nPBS: job killed: walltime 00:10:00 exceeded limit 00:10:00\n")
+    )
+
+    assert result is not None
+    assert result.category == "RESOURCE_WALLTIME"
+    assert result.severity == "HIGH"
+
+
 def test_classify_import_error_from_stderr_tail() -> None:
     result = classify_incident(
         _normalized(stderr_tail=_fixture_text("stderr_import_error.log"))
@@ -93,6 +103,16 @@ def test_classify_mpi_bootstrap_is_critical() -> None:
 
     assert result is not None
     assert result.category == "MPI_BOOTSTRAP"
+    assert result.severity == "CRITICAL"
+
+
+def test_classify_oom_kill_is_resource_oom() -> None:
+    result = classify_incident(
+        _normalized(stderr_tail="oom-kill: process 1234 terminated after GPU memory pressure\n")
+    )
+
+    assert result is not None
+    assert result.category == "RESOURCE_OOM"
     assert result.severity == "CRITICAL"
 
 
@@ -139,3 +159,13 @@ def test_classify_unknown_when_nonempty_evidence_has_no_specific_match() -> None
     assert result is not None
     assert result.category == "UNKNOWN"
     assert result.severity == "MEDIUM"
+
+
+def test_classify_path_error_matches_cannot_cd() -> None:
+    result = classify_incident(
+        _normalized(stderr_tail="bash: cannot cd /scratch/demo: No such file or directory\n")
+    )
+
+    assert result is not None
+    assert result.category == "ENV_PATH_ERROR"
+    assert result.severity == "HIGH"

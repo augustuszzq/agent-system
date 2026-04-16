@@ -15,6 +15,7 @@ _OOM_PATTERNS = (
     "out of memory",
     "cuda out of memory",
     "cublas_status_alloc_failed",
+    "oom-kill",
 )
 _WALLTIME_PATTERNS = (
     "walltime",
@@ -29,6 +30,7 @@ _IMPORT_ERROR_PATTERNS = (
 _PATH_ERROR_PATTERNS = (
     "no such file or directory",
     "cannot open",
+    "cannot cd",
 )
 _NCCL_PATTERNS = (
     "nccl",
@@ -97,12 +99,13 @@ def _match_filesystem_unavailable(incident: NormalizedIncidentInput) -> Classifi
 
 
 def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    line = _first_matching_line(
-        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail),
-        _OOM_PATTERNS,
-    )
+    lines = tuple(_iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail, incident.comment or ""))
+    line = _first_matching_line(lines, _OOM_PATTERNS)
     if line is None:
-        return None
+        has_killed_context = any("killed" in item for item in lines)
+        if not has_killed_context or not _contains_any(" ".join(lines), _OOM_PATTERNS[:-1]):
+            return None
+        line = next(item for item in lines if "killed" in item)
     return ClassifiedIncident(
         category="RESOURCE_OOM",
         severity="CRITICAL",
@@ -114,7 +117,7 @@ def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident
 
 def _match_resource_walltime(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
     line = _first_matching_line(
-        _iter_nonempty_lines(incident.stderr_tail, incident.comment or ""),
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail, incident.comment or ""),
         _WALLTIME_PATTERNS,
     )
     if line is None:
