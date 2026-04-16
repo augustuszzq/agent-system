@@ -127,6 +127,49 @@ def test_collect_incident_evidence_fetches_live_snapshot_when_bridge_attached(
     assert bridge.exec_calls == [qstat_command, stdout_command, stderr_command]
 
 
+def test_collect_incident_evidence_prefers_qstat_log_paths_for_live_tails(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.executor.pbs import build_qstat_command
+    from autoresearch.incidents.fetch import collect_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+    job_record = job_record.__class__(
+        **{
+            **job_record.__dict__,
+            "stdout_path": None,
+            "stderr_path": "/remote/repo/runs/run_demo/stale-stderr.log",
+        }
+    )
+    qstat_payload = json.loads(_fixture_text("qstat_running.json"))
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Output_Path"] = "polaris:/remote/qstat/stdout.log"
+    qstat_payload["Jobs"][job_record.pbs_job_id]["Error_Path"] = "polaris:/remote/qstat/stderr.log"
+    qstat_text = json.dumps(qstat_payload)
+    qstat_command = shlex.join(build_qstat_command(job_record.pbs_job_id or ""))
+    stdout_command = "tail -n 200 /remote/qstat/stdout.log"
+    stderr_command = "tail -n 200 /remote/qstat/stderr.log"
+    bridge = FakeBridgeClient(
+        state="ATTACHED",
+        exec_results={
+            qstat_command: _command_result(stdout=qstat_text),
+            stdout_command: _command_result(stdout="stdout from qstat path\n"),
+            stderr_command: _command_result(stdout="stderr from qstat path\n"),
+        },
+    )
+
+    result = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=bridge,
+    )
+
+    assert result.source == "live"
+    assert result.snapshot.stdout_tail_path.read_text(encoding="utf-8") == "stdout from qstat path\n"
+    assert result.snapshot.stderr_tail_path.read_text(encoding="utf-8") == "stderr from qstat path\n"
+    assert bridge.exec_calls == [qstat_command, stdout_command, stderr_command]
+
+
 def test_collect_incident_evidence_falls_back_to_latest_snapshot_when_bridge_detached(
     tmp_path: Path,
 ) -> None:
@@ -317,6 +360,42 @@ def test_normalize_incident_evidence_parses_qstat_and_stabilizes_repeated_tail_h
     assert normalized.scan_time == "2026-04-16T02:03:04+00:00"
     assert normalized.current_log_tail_hash == expected_hash
     assert normalized.previous_log_tail_hash == expected_hash
+
+
+def test_normalize_incident_evidence_ignores_corrupt_previous_snapshot(
+    tmp_path: Path,
+) -> None:
+    from autoresearch.incidents.fetch import collect_incident_evidence
+    from autoresearch.incidents.normalize import normalize_incident_evidence
+
+    paths = _paths(tmp_path)
+    job_record = _job_record()
+
+    first_dir = incident_snapshot_dir(paths, job_record.job_id, "2026-04-16T01:02:03+00:00")
+    first_dir.mkdir(parents=True, exist_ok=True)
+    (first_dir / "qstat.json").write_text(_fixture_text("qstat_running.json"), encoding="utf-8")
+    (first_dir / "stdout.tail.log").write_bytes(b"\xff\xfe\x00")
+    (first_dir / "stderr.tail.log").write_text("older stderr\n", encoding="utf-8")
+
+    second_dir = incident_snapshot_dir(paths, job_record.job_id, "2026-04-16T02:03:04+00:00")
+    second_dir.mkdir(parents=True, exist_ok=True)
+    (second_dir / "qstat.json").write_text(_fixture_text("qstat_running.json"), encoding="utf-8")
+    (second_dir / "stdout.tail.log").write_text("current stdout\n", encoding="utf-8")
+    (second_dir / "stderr.tail.log").write_text("current stderr\n", encoding="utf-8")
+
+    fetched = collect_incident_evidence(
+        paths=paths,
+        job_record=job_record,
+        bridge_client=FakeBridgeClient(state="DETACHED"),
+    )
+
+    normalized = normalize_incident_evidence(job_record=job_record, fetched=fetched)
+
+    assert normalized.snapshot_dir == second_dir
+    assert normalized.stdout_tail == "current stdout\n"
+    assert normalized.stderr_tail == "current stderr\n"
+    assert normalized.current_log_tail_hash == _combined_hash("current stdout\n", "current stderr\n")
+    assert normalized.previous_log_tail_hash is None
 
 
 def test_normalize_incident_evidence_raises_controlled_error_for_malformed_snapshot(

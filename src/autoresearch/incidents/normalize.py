@@ -21,16 +21,20 @@ def normalize_incident_evidence(
         qstat = parse_qstat_json(fetched.snapshot.qstat_json_path.read_text(encoding="utf-8"))
         stdout_tail = fetched.snapshot.stdout_tail_path.read_text(encoding="utf-8")
         stderr_tail = fetched.snapshot.stderr_tail_path.read_text(encoding="utf-8")
-
-        previous_log_tail_hash: str | None = None
-        if fetched.previous_snapshot is not None:
-            previous_stdout_tail = fetched.previous_snapshot.stdout_tail_path.read_text(encoding="utf-8")
-            previous_stderr_tail = fetched.previous_snapshot.stderr_tail_path.read_text(encoding="utf-8")
-            previous_log_tail_hash = _combined_tail_hash(previous_stdout_tail, previous_stderr_tail)
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         raise IncidentNormalizationError(
             f"incident snapshot normalization failed: {fetched.snapshot.snapshot_dir}"
         ) from exc
+
+    previous_log_tail_hash: str | None = None
+    if fetched.previous_snapshot is not None:
+        try:
+            previous_stdout_tail = fetched.previous_snapshot.stdout_tail_path.read_text(encoding="utf-8")
+            previous_stderr_tail = fetched.previous_snapshot.stderr_tail_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            previous_log_tail_hash = None
+        else:
+            previous_log_tail_hash = _combined_tail_hash(previous_stdout_tail, previous_stderr_tail)
 
     return NormalizedIncidentInput(
         job_id=job_record.job_id,

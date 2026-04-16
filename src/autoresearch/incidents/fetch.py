@@ -5,7 +5,7 @@ from pathlib import Path
 import shlex
 from typing import Protocol
 
-from autoresearch.executor.pbs import build_qstat_command
+from autoresearch.executor.pbs import build_qstat_command, parse_qstat_json
 from autoresearch.paths import AppPaths, incident_snapshot_dir, incident_state_dir
 from autoresearch.runs.registry import JobRecord
 from autoresearch.schemas import BridgeStatusResult, IncidentFetchResult, IncidentSnapshotRef
@@ -70,8 +70,21 @@ def _fetch_live_snapshot(
     if qstat_result.returncode != 0:
         raise IncidentFetchError(qstat_result.stderr.strip() or "qstat fetch failed")
 
-    stdout_tail = _tail_remote_path(bridge_client, job_record.stdout_path, "stdout")
-    stderr_tail = _tail_remote_path(bridge_client, job_record.stderr_path, "stderr")
+    try:
+        qstat = parse_qstat_json(qstat_result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise IncidentFetchError("qstat fetch returned invalid job data") from exc
+
+    stdout_tail = _tail_remote_path(
+        bridge_client,
+        qstat.stdout_path if qstat.stdout_path else job_record.stdout_path,
+        "stdout",
+    )
+    stderr_tail = _tail_remote_path(
+        bridge_client,
+        qstat.stderr_path if qstat.stderr_path else job_record.stderr_path,
+        "stderr",
+    )
 
     qstat_json_path = snapshot_dir / "qstat.json"
     stdout_tail_path = snapshot_dir / "stdout.tail.log"
