@@ -19,7 +19,7 @@ from autoresearch.bridge.remote_fs import (
     build_bootstrap_mkdir_command,
 )
 from autoresearch.schemas import BridgeStatusResult, CommandResult
-from autoresearch.settings import BridgeSettings, ProbeSettings, Settings
+from autoresearch.settings import BridgeSettings, ProbeSettings, RetryPolicySettings, Settings
 
 
 REMOTE_ROOT = "/eagle/lc-mpi/Zhiqing/auto-research"
@@ -269,6 +269,10 @@ def test_run_remote_bootstrap_executes_mkdir_command(monkeypatch, tmp_path: Path
             connect_timeout=15,
         ),
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
+        retry_policy=RetryPolicySettings(
+            safe_retry_categories=(),
+            allowed_actions=(),
+        ),
     )
     service = object()
     calls: list[tuple[object, bool]] = []
@@ -311,6 +315,10 @@ def test_run_remote_bootstrap_raises_on_failed_remote_command(monkeypatch, tmp_p
             connect_timeout=15,
         ),
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
+        retry_policy=RetryPolicySettings(
+            safe_retry_categories=(),
+            allowed_actions=(),
+        ),
     )
     failed_results: list[CommandResult] = []
 
@@ -359,6 +367,10 @@ def test_run_remote_bootstrap_force_invokes_bootstrap_helper(
             connect_timeout=15,
         ),
         probe=ProbeSettings(project="demo", queue="debug", walltime="00:10:00"),
+        retry_policy=RetryPolicySettings(
+            safe_retry_categories=(),
+            allowed_actions=(),
+        ),
     )
 
     calls: list[bool] = []
