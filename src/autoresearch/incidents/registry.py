@@ -55,47 +55,11 @@ class IncidentRegistry:
         evidence: dict[str, object],
     ) -> IncidentRecord:
         self._ensure_schema()
-        created_at = self._evidence_scan_time(evidence)
-        incident_id = f"incident_{uuid.uuid4().hex[:12]}"
+        updated_at = self._evidence_scan_time(evidence)
         evidence_json = json.dumps(evidence, sort_keys=True)
 
         with connect_db(self._db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO incidents (
-                    incident_id,
-                    run_id,
-                    job_id,
-                    severity,
-                    category,
-                    fingerprint,
-                    evidence_json,
-                    auto_action,
-                    status,
-                    created_at,
-                    updated_at,
-                    resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(job_id, category, fingerprint) DO UPDATE SET
-                    severity = excluded.severity,
-                    evidence_json = excluded.evidence_json,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    incident_id,
-                    run_id,
-                    job_id,
-                    severity,
-                    category,
-                    fingerprint,
-                    evidence_json,
-                    None,
-                    "OPEN",
-                    created_at,
-                    created_at,
-                    None,
-                ),
-            )
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT incident_id, run_id, job_id, severity, category,
@@ -103,9 +67,81 @@ class IncidentRegistry:
                        created_at, updated_at, resolved_at
                 FROM incidents
                 WHERE job_id IS ? AND category = ? AND fingerprint IS ?
+                ORDER BY updated_at DESC, created_at DESC, incident_id DESC
+                LIMIT 1
                 """,
                 (job_id, category, fingerprint),
             ).fetchone()
+            if row is not None:
+                conn.execute(
+                    """
+                    UPDATE incidents
+                    SET severity = ?,
+                        evidence_json = ?,
+                        updated_at = ?
+                    WHERE incident_id = ?
+                    """,
+                    (
+                        severity,
+                        evidence_json,
+                        updated_at,
+                        row["incident_id"],
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT incident_id, run_id, job_id, severity, category,
+                           fingerprint, evidence_json, auto_action, status,
+                           created_at, updated_at, resolved_at
+                    FROM incidents
+                    WHERE incident_id = ?
+                    """,
+                    (row["incident_id"],),
+                ).fetchone()
+            else:
+                incident_id = f"incident_{uuid.uuid4().hex[:12]}"
+                conn.execute(
+                    """
+                    INSERT INTO incidents (
+                        incident_id,
+                        run_id,
+                        job_id,
+                        severity,
+                        category,
+                        fingerprint,
+                        evidence_json,
+                        auto_action,
+                        status,
+                        created_at,
+                        updated_at,
+                        resolved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        incident_id,
+                        run_id,
+                        job_id,
+                        severity,
+                        category,
+                        fingerprint,
+                        evidence_json,
+                        None,
+                        "OPEN",
+                        updated_at,
+                        updated_at,
+                        None,
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT incident_id, run_id, job_id, severity, category,
+                           fingerprint, evidence_json, auto_action, status,
+                           created_at, updated_at, resolved_at
+                    FROM incidents
+                    WHERE incident_id = ?
+                    """,
+                    (incident_id,),
+                ).fetchone()
         if row is None:
             raise RuntimeError("incident upsert did not return a row")
         return self._row_to_record(row)

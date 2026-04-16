@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from autoresearch.db import init_db
@@ -39,6 +38,82 @@ def test_upsert_incident_reuses_existing_row_for_same_job_category_fingerprint(t
 
     assert created.incident_id == updated.incident_id
     assert created.created_at == updated.created_at
+    assert updated.updated_at == "2026-04-16T00:05:00+00:00"
+
+
+def test_upsert_incident_reuses_existing_row_when_fingerprint_is_null(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    created = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="HIGH",
+        category="UNKNOWN",
+        fingerprint=None,
+        evidence={
+            "scan_time": "2026-04-16T00:00:00+00:00",
+            "snapshot_dir": "/tmp/scan-a",
+            "classifier_rule": "fallback",
+            "matched_lines": ["first"],
+        },
+    )
+    updated = registry.upsert_incident(
+        run_id="run_demo",
+        job_id="job_demo",
+        severity="CRITICAL",
+        category="UNKNOWN",
+        fingerprint=None,
+        evidence={
+            "scan_time": "2026-04-16T00:05:00+00:00",
+            "snapshot_dir": "/tmp/scan-b",
+            "classifier_rule": "fallback",
+            "matched_lines": ["second"],
+        },
+    )
+
+    assert created.incident_id == updated.incident_id
+    assert created.created_at == updated.created_at
+    assert updated.severity == "CRITICAL"
+    assert updated.updated_at == "2026-04-16T00:05:00+00:00"
+
+
+def test_upsert_incident_reuses_existing_row_when_job_id_is_null(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+    init_db(db_path)
+    registry = IncidentRegistry(db_path)
+
+    created = registry.upsert_incident(
+        run_id="run_demo",
+        job_id=None,
+        severity="HIGH",
+        category="UNKNOWN",
+        fingerprint="fallback",
+        evidence={
+            "scan_time": "2026-04-16T00:00:00+00:00",
+            "snapshot_dir": "/tmp/scan-a",
+            "classifier_rule": "fallback",
+            "matched_lines": ["first"],
+        },
+    )
+    updated = registry.upsert_incident(
+        run_id="run_demo",
+        job_id=None,
+        severity="CRITICAL",
+        category="UNKNOWN",
+        fingerprint="fallback",
+        evidence={
+            "scan_time": "2026-04-16T00:05:00+00:00",
+            "snapshot_dir": "/tmp/scan-b",
+            "classifier_rule": "fallback",
+            "matched_lines": ["second"],
+        },
+    )
+
+    assert created.incident_id == updated.incident_id
+    assert created.created_at == updated.created_at
+    assert updated.severity == "CRITICAL"
     assert updated.updated_at == "2026-04-16T00:05:00+00:00"
 
 
