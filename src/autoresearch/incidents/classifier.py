@@ -19,6 +19,15 @@ _OOM_PATTERNS = (
     "cublas_status_alloc_failed",
     "oom-kill",
 )
+_OOM_CONTEXT_PATTERNS = (
+    "memory pressure",
+    "memory exhausted",
+    "memory exhaustion",
+    "memory allocation failed",
+    "gpu memory pressure",
+    "cuda memory",
+    "cuda oom",
+)
 _WALLTIME_PATTERNS = (
     "walltime",
     "exceeded limit",
@@ -106,7 +115,8 @@ def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident
     line = _first_matching_line(lines, _OOM_PATTERNS)
     if line is None:
         has_killed_context = any("killed" in item for item in lines)
-        if not has_killed_context or not _contains_any(" ".join(lines), _OOM_PATTERNS[:-1]):
+        has_memory_context = _contains_any(" ".join(lines), _OOM_PATTERNS[:-1] + _OOM_CONTEXT_PATTERNS)
+        if not has_killed_context or not has_memory_context:
             return None
         line = next(item for item in lines if "killed" in item)
     return ClassifiedIncident(

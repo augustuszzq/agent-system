@@ -146,6 +146,16 @@ def test_classify_oom_kill_is_resource_oom() -> None:
     assert result.severity == "CRITICAL"
 
 
+def test_classify_contextual_killed_memory_pressure_is_resource_oom() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="memory pressure rising\nKilled\n")
+    )
+
+    assert result is not None
+    assert result.category == "RESOURCE_OOM"
+    assert result.severity == "CRITICAL"
+
+
 def test_classify_no_heartbeat_requires_non_empty_stripped_output() -> None:
     result = classify_incident(
         _normalized(
