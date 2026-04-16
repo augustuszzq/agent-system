@@ -101,14 +101,18 @@ def _match_filesystem_unavailable(incident: NormalizedIncidentInput) -> Classifi
 
 
 def _match_resource_oom(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
-    lines = tuple(_iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail, incident.comment or ""))
+    lines = tuple(
+        _iter_nonempty_lines(incident.stdout_tail, incident.stderr_tail, incident.comment or "")
+    )
     line = _first_matching_line(lines, _OOM_PATTERNS)
     if line is None:
-        has_killed_context = any("killed" in item for item in lines)
-        has_memory_context = _contains_any(" ".join(lines), _OOM_PATTERNS[:-1] + _OOM_CONTEXT_PATTERNS)
-        if not has_killed_context or not has_memory_context:
+        killed_index = _first_killed_line_index(lines)
+        if killed_index is None:
             return None
-        line = next(item for item in lines if "killed" in item)
+        nearby_context = _lines_within_radius(lines, killed_index, radius=1)
+        if not _contains_any(" ".join(nearby_context), _OOM_PATTERNS[:-1] + _OOM_CONTEXT_PATTERNS):
+            return None
+        line = lines[killed_index]
     return ClassifiedIncident(
         category="RESOURCE_OOM",
         severity="CRITICAL",
@@ -202,10 +206,10 @@ def _is_mpi_bootstrap_line(line: str) -> bool:
     if "pmi server not found" in line:
         return True
     if "mpi_init" in line:
-        return _contains_any(line, ("failed", "error", "fatal", "abort", "not found"))
+        return _contains_any(line, ("failed", "fatal", "abort", "not found"))
     if "bootstrap" not in line:
         return False
-    return _contains_any(line, ("failed", "error", "fatal", "not found", "abort"))
+    return _contains_any(line, ("failed", "fatal", "not found", "abort"))
 
 
 def _is_nccl_failure_line(line: str) -> bool:
@@ -213,7 +217,12 @@ def _is_nccl_failure_line(line: str) -> bool:
         return False
     if "unhandled cuda error" in line:
         return True
-    return _contains_any(line, ("error", "failed", "fatal", "closed", "abort"))
+    if _contains_any(line, ("failed", "fatal", "abort", "error in")):
+        return True
+    return "warn" in line and _contains_any(
+        line,
+        ("connection closed by remote peer", "connection closed", "remote peer"),
+    )
 
 
 def _match_no_heartbeat(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
@@ -311,6 +320,19 @@ def _first_matching_line(lines: Iterable[str], patterns: Sequence[str]) -> str |
 def _contains_any(text: str, patterns: Sequence[str]) -> bool:
     lowered = text.lower()
     return any(pattern in lowered for pattern in patterns)
+
+
+def _first_killed_line_index(lines: Sequence[str]) -> int | None:
+    for index, line in enumerate(lines):
+        if "killed" in line:
+            return index
+    return None
+
+
+def _lines_within_radius(lines: Sequence[str], index: int, *, radius: int) -> tuple[str, ...]:
+    start = max(0, index - radius)
+    end = min(len(lines), index + radius + 1)
+    return tuple(lines[start:end])
 
 
 def _has_meaningful_output(*chunks: str) -> bool:
