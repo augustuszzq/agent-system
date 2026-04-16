@@ -78,7 +78,9 @@ class IncidentRegistry:
                     UPDATE incidents
                     SET severity = ?,
                         evidence_json = ?,
-                        updated_at = ?
+                        status = 'OPEN',
+                        updated_at = ?,
+                        resolved_at = NULL
                     WHERE incident_id = ?
                     """,
                     (
