@@ -145,6 +145,15 @@ def test_classify_benign_nccl_version_line_does_not_match() -> None:
     assert result.category == "UNKNOWN"
 
 
+def test_classify_benign_nccl_warning_line_does_not_match() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="NCCL WARN connection established\n")
+    )
+
+    assert result is not None
+    assert result.category == "UNKNOWN"
+
+
 def test_classify_oom_kill_is_resource_oom() -> None:
     result = classify_incident(
         _normalized(stderr_tail="oom-kill: process 1234 terminated after GPU memory pressure\n")
@@ -238,6 +247,15 @@ def test_classify_mpi_bootstrap_from_stdout_tail() -> None:
     assert result is not None
     assert result.category == "MPI_BOOTSTRAP"
     assert result.severity == "CRITICAL"
+
+
+def test_classify_benign_mpi_init_complete_does_not_match() -> None:
+    result = classify_incident(
+        _normalized(stdout_tail="MPI_Init complete\n")
+    )
+
+    assert result is not None
+    assert result.category == "UNKNOWN"
 
 
 def test_classify_benign_bootstrap_complete_does_not_match() -> None:

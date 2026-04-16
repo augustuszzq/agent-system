@@ -44,11 +44,6 @@ _PATH_ERROR_PATTERNS = (
     "cannot cd",
     "can't open file",
 )
-_NCCL_PATTERNS = (
-    "nccl",
-    "unhandled cuda error",
-)
-
 _RUNNING_LIKE_STATES = {"R", "E", "S"}
 
 
@@ -204,8 +199,10 @@ def _match_mpi_bootstrap(incident: NormalizedIncidentInput) -> ClassifiedInciden
 
 
 def _is_mpi_bootstrap_line(line: str) -> bool:
-    if "mpi_init" in line or "pmi server not found" in line:
+    if "pmi server not found" in line:
         return True
+    if "mpi_init" in line:
+        return _contains_any(line, ("failed", "error", "fatal", "abort", "not found"))
     if "bootstrap" not in line:
         return False
     return _contains_any(line, ("failed", "error", "fatal", "not found", "abort"))
@@ -216,7 +213,7 @@ def _is_nccl_failure_line(line: str) -> bool:
         return False
     if "unhandled cuda error" in line:
         return True
-    return _contains_any(line, ("error", "warn", "failed", "fatal", "closed", "abort"))
+    return _contains_any(line, ("error", "failed", "fatal", "closed", "abort"))
 
 
 def _match_no_heartbeat(incident: NormalizedIncidentInput) -> ClassifiedIncident | None:
