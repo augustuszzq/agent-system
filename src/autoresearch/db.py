@@ -7,6 +7,7 @@ from autoresearch.models import (
     DECISIONS_TABLE_SQL,
     INCIDENTS_TABLE_SQL,
     JOBS_TABLE_SQL,
+    RETRY_REQUESTS_TABLE_SQL,
     RUNS_TABLE_SQL,
 )
 
@@ -130,4 +131,5 @@ def init_db(db_path: Path) -> None:
         conn.execute(JOBS_TABLE_SQL)
         conn.execute(INCIDENTS_TABLE_SQL)
         conn.execute(DECISIONS_TABLE_SQL)
+        conn.execute(RETRY_REQUESTS_TABLE_SQL)
         _ensure_incidents_updated_at(conn)

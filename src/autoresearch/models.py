@@ -65,3 +65,26 @@ CREATE TABLE IF NOT EXISTS decisions(
   actor TEXT NOT NULL
 )
 """
+
+RETRY_REQUESTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS retry_requests(
+  retry_request_id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  source_run_id TEXT,
+  source_job_id TEXT,
+  source_pbs_job_id TEXT,
+  requested_action TEXT NOT NULL,
+  approval_status TEXT NOT NULL,
+  execution_status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL,
+  approved_by TEXT,
+  approval_reason TEXT,
+  last_error TEXT,
+  result_run_id TEXT,
+  result_job_id TEXT,
+  result_pbs_job_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  executed_at TEXT
+)
+"""

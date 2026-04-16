@@ -42,6 +42,20 @@ class RunRegistry:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
 
+    def get_run(self, run_id: str) -> RunRecord:
+        with connect_db(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT run_id, run_kind, project, created_at, status, notes
+                FROM runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"run not found: {run_id}")
+        return self._row_to_record(row)
+
     def create_run(self, request: RunCreateRequest) -> RunRecord:
         record = RunRecord(
             run_id=f"run_{uuid.uuid4().hex[:12]}",

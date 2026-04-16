@@ -21,6 +21,16 @@ def _write_bridge_config(conf_dir: Path) -> None:
     )
 
 
+def _write_retry_policy(conf_dir: Path) -> None:
+    (conf_dir / "retry_policy.yaml").write_text(
+        "safe_retry_categories:\n"
+        "  - FILESYSTEM_UNAVAILABLE\n"
+        "allowed_actions:\n"
+        "  - RETRY_SAME_CONFIG\n",
+        encoding="utf-8",
+    )
+
+
 def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
     repo_root = tmp_path
     conf_dir = repo_root / "conf"
@@ -37,6 +47,7 @@ def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _write_bridge_config(conf_dir)
+    _write_retry_policy(conf_dir)
 
     settings = load_settings(repo_root=repo_root)
 
@@ -47,6 +58,8 @@ def test_load_settings_reads_yaml_and_derives_paths(tmp_path: Path) -> None:
     assert settings.bridge.server_alive_interval == 60
     assert settings.bridge.server_alive_count_max == 3
     assert settings.bridge.connect_timeout == 15
+    assert settings.retry_policy.safe_retry_categories == ("FILESYSTEM_UNAVAILABLE",)
+    assert settings.retry_policy.allowed_actions == ("RETRY_SAME_CONFIG",)
 
 
 def test_env_override_replaces_db_path(tmp_path: Path, monkeypatch) -> None:
@@ -65,6 +78,7 @@ def test_env_override_replaces_db_path(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
     _write_bridge_config(conf_dir)
+    _write_retry_policy(conf_dir)
     monkeypatch.setenv("AUTORESEARCH_DB", str(repo_root / "custom.db"))
 
     settings = load_settings(repo_root=repo_root)
@@ -88,6 +102,7 @@ def test_load_settings_reads_bridge_config(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _write_bridge_config(conf_dir)
+    _write_retry_policy(conf_dir)
 
     settings = load_settings(repo_root=repo_root)
 
@@ -116,6 +131,7 @@ def test_load_settings_reads_probe_defaults(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _write_bridge_config(conf_dir)
+    _write_retry_policy(conf_dir)
 
     settings = load_settings(repo_root=repo_root)
 

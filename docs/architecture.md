@@ -77,6 +77,34 @@ Phase 4A adds a manual, operator-triggered incident scan path:
 
 If the bridge is detached or stale, or if live capture or snapshot persistence fails, the scan falls back to the newest local snapshot already stored for that job. Phase 4A does not auto-resolve incidents and does not retry scans.
 
+## Phase 4B safe retry and approval
+
+Phase 4B adds a narrow, operator-approved retry path on top of the incident registry:
+
+1. create a retry request only for incidents that are `OPEN` and whitelisted by `conf/retry_policy.yaml`
+2. approve or reject the retry request explicitly
+3. execute an approved request through the same live Polaris probe submission path used by `job submit-probe`
+
+Implementation boundaries:
+
+- `src/autoresearch/retries/policy.py`
+  - evaluates whether a retry category and action are permitted by config
+- `src/autoresearch/retries/registry.py`
+  - persists retry requests and enforces approval/execution state transitions
+- `src/autoresearch/decisions.py`
+  - appends audit rows for retry approval, rejection, and execution
+- `src/autoresearch/executor/probe_submit.py`
+  - owns the shared live probe submission helper reused by `job submit-probe` and `retry execute`
+- `src/autoresearch/retries/executor.py`
+  - loads the source incident, run, and job
+  - validates that the request is executable
+  - submits the retry as a new probe run and job
+  - records the result ids back onto the retry request
+- `src/autoresearch/cli.py`
+  - exposes `retry request`, `retry list`, `retry approve`, `retry reject`, and `retry execute`
+
+Phase 4B stays conservative by design. It only supports `RETRY_SAME_CONFIG` for `FILESYSTEM_UNAVAILABLE` incidents and it creates a fresh run and job for each execution. It does not mutate the original experiment, retry arbitrary job kinds, or auto-execute pending requests.
+
 ## Local foundation
 
 The local foundation owns:

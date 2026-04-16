@@ -22,7 +22,7 @@ def test_init_db_creates_core_tables(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    assert {"runs", "jobs", "incidents", "decisions"} <= tables
+    assert {"runs", "jobs", "incidents", "decisions", "retry_requests"} <= tables
 
 
 def test_connect_db_enables_wal(tmp_path: Path) -> None:
@@ -261,3 +261,39 @@ def test_init_db_migrates_nullable_existing_updated_at_column(
         conn.close()
 
     assert row == ("2026-04-16T00:00:00+00:00", "2026-04-16T00:00:00+00:00")
+
+
+def test_retry_requests_table_has_expected_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "autoresearch.db"
+
+    init_db(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(retry_requests)").fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert columns == {
+        "retry_request_id",
+        "incident_id",
+        "source_run_id",
+        "source_job_id",
+        "source_pbs_job_id",
+        "requested_action",
+        "approval_status",
+        "execution_status",
+        "attempt_count",
+        "approved_by",
+        "approval_reason",
+        "last_error",
+        "result_run_id",
+        "result_job_id",
+        "result_pbs_job_id",
+        "created_at",
+        "updated_at",
+        "executed_at",
+    }

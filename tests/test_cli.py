@@ -4,11 +4,13 @@ from typer.testing import CliRunner
 
 from autoresearch import cli as cli_module
 from autoresearch.bridge.remote_exec import RemoteBridgeError
+from autoresearch.decisions import DecisionLog
 from autoresearch.cli import app
 from autoresearch.db import connect_db, init_db
 from autoresearch.incidents.fetch import IncidentFetchError
 from autoresearch.incidents.registry import IncidentRegistry
 from autoresearch.incidents.summaries import render_incident_row, render_incident_summary
+from autoresearch.retries.registry import RetryRequestRegistry
 from autoresearch.runs.registry import RunRegistry
 from autoresearch.schemas import (
     BridgeStatusResult,
@@ -56,10 +58,57 @@ def _write_bridge_config(conf_dir: Path) -> None:
     )
 
 
+def _write_retry_policy(conf_dir: Path) -> None:
+    (conf_dir / "retry_policy.yaml").write_text(
+        "safe_retry_categories:\n"
+        "  - FILESYSTEM_UNAVAILABLE\n"
+        "allowed_actions:\n"
+        "  - RETRY_SAME_CONFIG\n",
+        encoding="utf-8",
+    )
+
+
 def _write_repo_config(tmp_path: Path) -> None:
     (tmp_path / "conf").mkdir()
     _write_app_config(tmp_path / "conf")
     _write_bridge_config(tmp_path / "conf")
+    _write_retry_policy(tmp_path / "conf")
+
+
+def _seed_retryable_incident(tmp_path: Path) -> tuple[str, str, str]:
+    init_db(tmp_path / "state" / "autoresearch.db")
+    run_registry = RunRegistry(tmp_path / "state" / "autoresearch.db")
+    run_record = run_registry.create_run(RunCreateRequest(run_kind="probe", project="demo"))
+    job_record = run_registry.create_job(
+        run_id=run_record.run_id,
+        backend="pbs",
+        queue="debug",
+        walltime="00:10:00",
+        filesystems="eagle",
+        select_expr="1:system=polaris",
+        place_expr="scatter",
+        submit_script_path="/tmp/submit.pbs",
+        stdout_path="/tmp/stdout.log",
+        stderr_path="/tmp/stderr.log",
+        pbs_job_id="123456.polaris-pbs-01",
+    )
+    incident = IncidentRegistry(tmp_path / "state" / "autoresearch.db").upsert_incident(
+        run_id=run_record.run_id,
+        job_id=job_record.job_id,
+        severity="HIGH",
+        category="FILESYSTEM_UNAVAILABLE",
+        fingerprint="fp-retry",
+        evidence={
+            "scan_time": "2026-04-16T12:00:00",
+            "snapshot_dir": str(tmp_path / "state" / "incidents" / job_record.job_id / "scan"),
+            "qstat_comment": "filesystem unavailable",
+            "job_state": "F",
+            "exec_host": "node01",
+            "matched_lines": ["filesystem unavailable"],
+            "classifier_rule": "filesystem_unavailable",
+        },
+    )
+    return incident.incident_id, run_record.run_id, job_record.job_id
 
 
 class FakeBridgeService:
@@ -171,6 +220,7 @@ def test_cli_help_shows_top_level_commands() -> None:
     assert "bridge" in result.stdout
     assert "job" in result.stdout
     assert "incident" in result.stdout
+    assert "retry" in result.stdout
 
 
 def test_db_init_creates_database_file(tmp_path, monkeypatch) -> None:
@@ -775,6 +825,112 @@ def test_incident_scan_reports_updated_incident_when_matching_row_exists(tmp_pat
     assert result.exit_code == 0
     assert "updated incident" in result.stdout.lower()
     assert "source=live" in result.stdout
+
+
+def test_retry_request_approve_execute_round_trip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    incident_id, _, source_job_id = _seed_retryable_incident(tmp_path)
+
+    request_result = runner.invoke(app, ["retry", "request", "--incident-id", incident_id])
+
+    assert request_result.exit_code == 0
+    retry_request_id = request_result.stdout.strip().split("\t")[0]
+    list_result = runner.invoke(app, ["retry", "list"])
+    assert retry_request_id in list_result.stdout
+    assert "\tPENDING\tNOT_STARTED\t-\t" in list_result.stdout
+
+    approve_result = runner.invoke(
+        app,
+        [
+            "retry",
+            "approve",
+            "--retry-request-id",
+            retry_request_id,
+            "--reason",
+            "filesystem recovered",
+        ],
+    )
+
+    assert approve_result.exit_code == 0
+    assert "\tAPPROVED\tNOT_STARTED" in approve_result.stdout
+    decision_log = DecisionLog(tmp_path / "state" / "autoresearch.db")
+    assert [record.decision for record in decision_log.list_for_target("retry_request", retry_request_id)] == [
+        "approve-retry"
+    ]
+
+    submit_calls: list[dict[str, object]] = []
+
+    def fake_submit_live_probe_run(**kwargs):
+        submit_calls.append(kwargs)
+        return ("run_retry", "job_retry", "123456.retry")
+
+    monkeypatch.setattr(cli_module, "build_bridge_service", lambda: FakeBridgeService())
+    monkeypatch.setattr(cli_module, "bootstrap_remote_root", lambda client, remote_root, *, force: None)
+    monkeypatch.setattr(cli_module, "submit_live_probe_run", fake_submit_live_probe_run)
+
+    execute_result = runner.invoke(
+        app,
+        ["retry", "execute", "--retry-request-id", retry_request_id],
+    )
+
+    assert execute_result.exit_code == 0
+    captured = submit_calls[0]
+    assert captured["run_kind"] == "probe-retry"
+    assert captured["notes"] == (
+        f"retry_request={retry_request_id} source_incident={incident_id} source_job={source_job_id}"
+    )
+    assert captured["project"] == "demo"
+    assert captured["queue"] == "debug"
+    assert captured["walltime"] == "00:10:00"
+    assert captured["settings"].paths.db_path == tmp_path / "state" / "autoresearch.db"
+    assert isinstance(captured["service"], FakeBridgeService)
+    retry_registry = RetryRequestRegistry(tmp_path / "state" / "autoresearch.db")
+    record = retry_registry.get(retry_request_id)
+    assert record.approval_status == "APPROVED"
+    assert record.execution_status == "SUBMITTED"
+    assert record.result_run_id == "run_retry"
+    assert record.result_job_id == "job_retry"
+    assert record.result_pbs_job_id == "123456.retry"
+    assert record.attempt_count == 1
+    assert [record.decision for record in decision_log.list_for_target("retry_request", retry_request_id)] == [
+        "approve-retry",
+        "execute-retry",
+    ]
+
+
+def test_retry_reject_and_list_show_rejected_request(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTORESEARCH_DB", str(tmp_path / "state" / "autoresearch.db"))
+    monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
+    _write_repo_config(tmp_path)
+    incident_id, _, _ = _seed_retryable_incident(tmp_path)
+
+    request_result = runner.invoke(app, ["retry", "request", "--incident-id", incident_id])
+    retry_request_id = request_result.stdout.strip().split("\t")[0]
+
+    reject_result = runner.invoke(
+        app,
+        [
+            "retry",
+            "reject",
+            "--retry-request-id",
+            retry_request_id,
+            "--reason",
+            "not needed",
+        ],
+    )
+
+    assert reject_result.exit_code == 0
+    assert "\tREJECTED\tNOT_STARTED" in reject_result.stdout
+
+    list_result = runner.invoke(app, ["retry", "list"])
+    assert retry_request_id in list_result.stdout
+    assert "\tREJECTED\tNOT_STARTED\t-\t" in list_result.stdout
+    decision_log = DecisionLog(tmp_path / "state" / "autoresearch.db")
+    assert [record.decision for record in decision_log.list_for_target("retry_request", retry_request_id)] == [
+        "reject-retry"
+    ]
 
 def test_job_render_pbs_rejects_configured_remote_root_with_whitespace(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTORESEARCH_REPO_ROOT", str(tmp_path))
